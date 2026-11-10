@@ -1,0 +1,6 @@
+data/stampd.db
+data/uploads/
+__pycache__/
+*.pyc
+DEMO_SCRIPT.md
+push_to_github.bat

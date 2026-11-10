@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stampd — invoice decisions, explained</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='3' width='26' height='26' rx='7' fill='%2314110F'/><path d='M10 17l4 4 8-9' stroke='%23D4FF3A' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+:root{
+  --paper:#F3F0E8; --card:#FFFDF8; --ink:#14110F; --ink2:#4A4540; --mute:#8A837A; --line:#E3DED3; --line2:#D2CBBE;
+  --lime:#D4FF3A; --lime-ink:#2B3A00;
+  --ok:#0E9F5A; --ok-bg:#E3F7EC; --warn:#D97706; --warn-bg:#FFF2DB; --bad:#E0393E; --bad-bg:#FDE6E6; --info:#5B5BD6; --info-bg:#ECECFD;
+  --r:14px; --shadow:0 1px 0 rgba(20,17,15,.04),0 8px 24px -12px rgba(20,17,15,.18);
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --body:'Instrument Sans',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box} html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font:15px/1.5 var(--body);-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(rgba(20,17,15,.045) 1px,transparent 1px);background-size:18px 18px}
+button{font:inherit;cursor:pointer} a{color:inherit}
+.mono{font-family:var(--mono);font-feature-settings:"tnum"}
+/* top bar */
+header{position:sticky;top:0;z-index:20;background:rgba(243,240,232,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.bar{max-width:1320px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:20px}
+.logo{display:flex;align-items:center;gap:10px;font:800 22px/1 var(--display);letter-spacing:-.03em;text-decoration:none}
+.logo .mark{width:30px;height:30px;border-radius:9px;background:var(--ink);display:grid;place-items:center;transform:rotate(-6deg)}
+.logo small{font:500 12px var(--body);color:var(--mute);letter-spacing:0;margin-left:4px}
+nav.tabs{display:flex;gap:4px;background:#E9E4D9;padding:4px;border-radius:12px}
+nav.tabs a{padding:7px 14px;border-radius:9px;text-decoration:none;font-weight:600;font-size:14px;color:var(--ink2);display:flex;gap:8px;align-items:center}
+nav.tabs a.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+nav.tabs .count{font:600 11px var(--mono);background:var(--ink);color:var(--lime);border-radius:99px;padding:1px 7px}
+.spacer{flex:1}
+.pill{font-size:12px;color:var(--ink2);border:1px solid var(--line2);border-radius:99px;padding:5px 10px;white-space:nowrap}
+.btn{text-decoration:none;display:inline-block;border:1px solid var(--line2);background:var(--card);border-radius:10px;padding:8px 14px;font-weight:600;font-size:14px;transition:transform .12s,background .15s}
+.btn:hover{background:#fff;transform:translateY(-1px)} .btn:active{transform:translateY(0)}
+.btn.dark{background:var(--ink);color:#fff;border-color:var(--ink)} .btn.dark:hover{background:#2a2521}
+.btn.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+main{max-width:1320px;margin:0 auto;padding:24px;overflow-x:clip}
+/* run layout */
+.runwrap{display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.side{position:sticky;top:84px;display:flex;flex-direction:column;gap:16px}
+.drop{padding:22px;text-align:center;border:2px dashed var(--line2);border-radius:var(--r);background:var(--card);transition:all .2s;cursor:pointer}
+.drop:hover,.drop.over{border-color:var(--ink);background:#fff}
+.drop.over{transform:scale(1.01);box-shadow:0 0 0 6px rgba(212,255,58,.55)}
+.drop h3{margin:10px 0 2px;font:700 18px var(--display);letter-spacing:-.02em} .drop p{margin:0;color:var(--mute);font-size:13px}
+.drop .ic{width:44px;height:44px;margin:0 auto;border-radius:12px;background:var(--lime);display:grid;place-items:center;transform:rotate(-4deg)}
+.deck h4{margin:0;padding:14px 16px 10px;font:700 13px var(--body);text-transform:uppercase;letter-spacing:.08em;color:var(--mute);display:flex;justify-content:space-between}
+.sample{display:flex;gap:12px;align-items:center;padding:11px 16px;border-top:1px solid var(--line);cursor:pointer;transition:background .12s}
+.sample:hover{background:#FAF7EF} .sample:hover .go{opacity:1;transform:translateX(0)}
+.sample .n{font:600 12px var(--mono);width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:none;background:#EFEBE2}
+.sample.happy .n{background:var(--ok-bg);color:var(--ok)} .sample.edge .n{background:#F1EAFE;color:#6D3FD8}
+.sample b{display:block;font-size:14px;font-weight:600} .sample span{font-size:12.5px;color:var(--mute)}
+.sample .go{margin-left:auto;opacity:0;transform:translateX(-4px);transition:all .15s;font-weight:700}
+.sample .pv{margin-left:auto;font-size:12px;color:var(--mute);text-decoration:underline;text-underline-offset:2px}
+/* stage rail */
+.runhead{padding:18px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.runhead h2{margin:0;font:700 20px var(--display);letter-spacing:-.02em;word-break:break-all}
+.runhead .meta{color:var(--mute);font-size:13px}
+.live{display:inline-flex;align-items:center;gap:7px;font:600 12px var(--mono);padding:4px 10px;border-radius:99px;background:var(--ink);color:var(--lime)}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--lime);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.progress{height:4px;background:var(--line);overflow:hidden} .progress div{height:100%;background:var(--ink);transition:width .4s cubic-bezier(.2,.8,.2,1)}
+.stages{padding:14px 22px 22px;position:relative}
+.stage{display:grid;grid-template-columns:34px 1fr;gap:14px;position:relative}
+.stage:not(:last-child)::before{content:"";position:absolute;left:16px;top:34px;bottom:-4px;width:2px;background:var(--line)}
+.stage.done:not(:last-child)::before{background:var(--ink)}
+.dot{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;border:2px solid var(--line2);background:var(--card);z-index:1;font:600 12px var(--mono);color:var(--mute);transition:all .25s}
+.stage.running .dot{border-color:var(--ink);color:var(--ink);background:var(--lime);animation:spinr 1.2s linear infinite}
+@keyframes spinr{0%{box-shadow:0 0 0 0 rgba(212,255,58,.9)}100%{box-shadow:0 0 0 10px rgba(212,255,58,0)}}
+.stage.pass .dot{background:var(--ok);border-color:var(--ok);color:#fff} .stage.warn .dot{background:var(--warn);border-color:var(--warn);color:#fff} .stage.fail .dot{background:var(--bad);border-color:var(--bad);color:#fff}
+.sbody{padding:5px 0 16px;min-width:0}
+.stitle{display:flex;align-items:baseline;gap:10px;cursor:pointer;user-select:none}
+.stitle b{font-weight:600} .stitle .sum{color:var(--ink2);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .stitle .ms{margin-left:auto;color:var(--mute);font:12px var(--mono);flex:none}
+.stage.pending .stitle{color:var(--mute)}
+.checks{margin-top:8px;display:grid;gap:5px;animation:fadein .3s}
+@keyframes fadein{from{opacity:0;transform:translateY(-3px)}}
+.chk{display:grid;grid-template-columns:18px 210px 1fr;gap:8px;font-size:13.5px;align-items:baseline;padding:6px 10px;border-radius:9px;background:#FAF7EF}
+.chk .s{font-weight:700} .chk.pass .s{color:var(--ok)} .chk.warn .s{color:var(--warn)} .chk.fail .s{color:var(--bad)}
+.chk.fail{background:var(--bad-bg)} .chk.warn{background:var(--warn-bg)}
+.chk .l{color:var(--ink2)} .chk .d{font-family:var(--mono);font-size:12.5px;word-break:break-word}
+.skeleton{height:12px;width:40%;border-radius:6px;background:linear-gradient(90deg,#EEE9DF,#F8F5EE,#EEE9DF);background-size:200% 100%;animation:sk 1s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+/* decision */
+.decision{margin-top:24px;overflow:hidden;animation:pop .45s cubic-bezier(.2,1.4,.4,1)}
+@keyframes pop{from{opacity:0;transform:scale(.97) translateY(8px)}}
+.dtop{display:grid;grid-template-columns:auto 1fr;gap:26px;padding:24px;align-items:center;border-bottom:1px solid var(--line)}
+.stamp{font:800 30px/1 var(--display);letter-spacing:.04em;padding:12px 18px;border:4px solid currentColor;border-radius:10px;transform:rotate(-7deg);position:relative;
+  -webkit-mask:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.2 1.7'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>");
+  mask:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.2 1.7'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>");
+  animation:stamp .5s cubic-bezier(.2,1.6,.4,1)}
+@keyframes stamp{0%{transform:rotate(-7deg) scale(2.2);opacity:0}100%{transform:rotate(-7deg) scale(1);opacity:1}}
+.stamp.APPROVE{color:var(--ok)} .stamp.HOLD{color:var(--warn)} .stamp.REJECT{color:var(--bad)} .stamp.ERROR{color:var(--mute)}
+.dtop h3{margin:0 0 6px;font:700 22px/1.25 var(--display);letter-spacing:-.02em}
+.route{display:inline-flex;gap:6px;align-items:center;font-size:13px;font-weight:600;padding:4px 10px;border-radius:99px;background:#EFEBE2}
+.dgrid{display:grid;grid-template-columns:1.1fr 1fr}
+.dgrid>section{padding:20px 24px} .dgrid>section+section{border-left:1px solid var(--line)}
+.sec-t{font:700 12px var(--body);text-transform:uppercase;letter-spacing:.08em;color:var(--mute);margin:0 0 12px}
+.flag{padding:12px 14px;border-radius:11px;margin-bottom:8px;border-left:4px solid;font-size:14px}
+.flag code{font:600 11.5px var(--mono);display:block;margin-bottom:3px;letter-spacing:.02em}
+.flag.reject{background:var(--bad-bg);border-color:var(--bad)} .flag.reject code{color:var(--bad)}
+.flag.hold{background:var(--warn-bg);border-color:var(--warn)} .flag.hold code{color:var(--warn)}
+.flag.info{background:var(--info-bg);border-color:var(--info)} .flag.info code{color:var(--info)}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:14px}
+.kv dt{color:var(--mute)} .kv dd{margin:0;font-family:var(--mono);font-size:13px;word-break:break-word}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font:600 11.5px var(--body);text-transform:uppercase;letter-spacing:.06em;color:var(--mute);padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line)} td.r,th.r{text-align:right}
+.email{margin:0 24px 24px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.email .eh{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#FAF7EF;border-bottom:1px solid var(--line);font-size:13px}
+.email pre{margin:0;padding:14px;white-space:pre-wrap;font:13.5px/1.6 var(--body)}
+details.raw{margin:0 24px 24px} details.raw summary{cursor:pointer;color:var(--mute);font-size:13px}
+details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4D9;padding:14px;border-radius:10px;font:12px/1.5 var(--mono)}
+.empty{padding:70px 30px;text-align:center}
+.empty h2{font:800 40px/1.05 var(--display);letter-spacing:-.04em;margin:18px 0 10px}
+.empty h2 em{font-style:normal;background:var(--lime);padding:0 8px;border-radius:8px;display:inline-block;transform:rotate(-1.5deg)}
+.empty p{color:var(--ink2);max-width:520px;margin:0 auto}
+.flow{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+.flow span{font:600 12px var(--mono);padding:6px 10px;border:1px solid var(--line2);border-radius:99px;background:var(--card)}
+.flow i{color:var(--mute);font-style:normal;align-self:center}
+/* dashboard */
+.dhead{display:flex;align-items:end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+.dhead h1{margin:0;font:800 34px/1 var(--display);letter-spacing:-.04em}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:18px}
+.kpi{padding:16px 18px;min-width:0} .kpi .v{overflow-wrap:anywhere} .kpi .l{font-size:12.5px;color:var(--mute);font-weight:500} .kpi .v{font:700 30px/1.15 var(--display);letter-spacing:-.03em;margin-top:6px}
+.kpi .v small{font-size:14px;color:var(--mute);font-weight:500;margin-left:2px}
+.kpi.hero{background:var(--ink);color:#fff;border-color:var(--ink)} .kpi.hero .l{color:#A8A096} .kpi.hero .v{color:var(--lime)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+.row2 .panel{padding:18px 20px}
+.stack{display:flex;height:14px;border-radius:99px;overflow:hidden;background:var(--line);margin:8px 0 14px}
+.stack div{transition:width .5s} .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+.hbar{display:grid;grid-template-columns:160px 1fr 28px;gap:10px;align-items:center;font-size:13px;margin-bottom:8px}
+.hbar .t{height:10px;background:#EFEBE2;border-radius:99px;overflow:hidden} .hbar .t div{height:100%;background:var(--ink);border-radius:99px}
+.filters{display:flex;gap:6px;padding:14px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center}
+.chip{border:1px solid var(--line2);background:transparent;border-radius:99px;padding:5px 12px;font-size:13px;font-weight:600}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.search{margin-left:auto;border:1px solid var(--line2);border-radius:10px;padding:7px 12px;font:inherit;font-size:13.5px;background:#fff;min-width:220px}
+.runs tr{cursor:pointer;transition:background .1s} .runs tbody tr:hover{background:#FAF7EF}
+.badge{font:700 11px var(--mono);padding:3px 8px;border-radius:6px;letter-spacing:.04em}
+.badge.APPROVE{background:var(--ok-bg);color:var(--ok)} .badge.HOLD{background:var(--warn-bg);color:var(--warn)} .badge.REJECT{background:var(--bad-bg);color:var(--bad)} .badge.ERROR,.badge.RUNNING{background:#EFEBE2;color:var(--ink2)}
+.tag{font:500 11px var(--mono);color:var(--ink2);background:#EFEBE2;border-radius:5px;padding:2px 6px;margin:1px 2px 1px 0;display:inline-block}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:all .25s;z-index:50;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.pdfmodal{position:fixed;inset:0;background:rgba(20,17,15,.55);display:none;place-items:center;z-index:40;padding:20px}
+.pdfmodal.show{display:grid} .pdfmodal .box{width:min(820px,100%);height:min(90vh,1000px);background:var(--card);border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+.pdfmodal .box header{position:static;display:flex;padding:10px 14px;align-items:center;gap:10px;background:var(--card)}
+.pdfmodal iframe{flex:1;border:0;width:100%}
+.hide{display:none!important}
+@media (max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:900px){
+  .runwrap{grid-template-columns:1fr} .side{position:static} .dgrid{grid-template-columns:1fr} .dgrid>section+section{border-left:0;border-top:1px solid var(--line)}
+  .row2{grid-template-columns:1fr} .chk{grid-template-columns:18px 1fr} .chk .d{grid-column:2} .bar .pill{display:none}
+}
+@media (max-width:600px){
+  main{padding:16px} .kpi .v{font-size:20px!important} .kpis{gap:10px} .bar{padding:10px 16px;gap:10px;flex-wrap:wrap} .logo small{display:none} .kpis{grid-template-columns:repeat(2,1fr)}
+  .dtop{grid-template-columns:1fr} .stamp{justify-self:start} .search{min-width:0;width:100%;margin-left:0} .empty h2{font-size:30px}
+  .hide-sm{display:none} .runs td,.runs th{padding:8px 6px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <a class="logo" href="#run"><span class="mark"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7.5" stroke="#D4FF3A" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>stampd<small>AP decisions, explained</small></a>
+  <nav class="tabs"><a href="#run" id="tab-run">⚡ Live run</a><a href="#dash" id="tab-dash">▦ Dashboard <span class="count" id="runcount">0</span></a></nav>
+  <div class="spacer"></div>
+  <span class="pill" id="policy">Tolerance ≤2% · ≤₹10k</span>
+  <button class="btn sm" id="reset" title="Clear all runs and restore the seeded payment ledger">↺ Reset demo</button>
+</div></header>
+
+<main>
+  <section id="view-run" class="runwrap">
+    <aside class="side">
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#14110F" stroke-width="2.2" stroke-linecap="round"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 18v2h16v-2"/></svg></div>
+        <h3>Drop an invoice PDF</h3><p>Native or scanned · or click to browse</p>
+      </label>
+      <div class="panel deck"><h4><span>Test deck</span><span id="deckcount"></span></h4><div id="samples"></div></div>
+    </aside>
+    <div id="runpane">
+      <div class="panel empty" id="empty">
+        <div class="logo" style="justify-content:center"><span class="mark" style="width:54px;height:54px;border-radius:15px"><svg width="28" height="28" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7.5" stroke="#D4FF3A" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+        <h2>Every invoice gets a <em>decision</em>.<br>Every decision gets a reason.</h2>
+        <p>Drop a vendor invoice or pick one from the test deck. Stampd reads it, checks it against the vendor master, purchase orders and payment history, and tells you what to do and why.</p>
+        <div class="flow"><span>Ingest</span><i>→</i><span>Extract</span><i>→</i><span>Validate</span><i>→</i><span>Vendor</span><i>→</i><span>PO match</span><i>→</i><span>Duplicate</span><i>→</i><span style="background:var(--lime);border-color:var(--ink)">Decision</span></div>
+      </div>
+      <div id="run" class="hide"></div>
+    </div>
+  </section>
+
+  <section id="view-dash" class="hide">
+    <div class="dhead"><div><div class="sec-t" style="margin:0 0 6px">Accounts payable · Meridian Retail</div><h1>Run history</h1></div><div class="spacer"></div><a class="btn dark" href="#run">+ New run</a></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="row2">
+      <div class="panel"><div class="sec-t">Decision mix</div><div class="stack" id="mix"></div><div class="legend" id="mixleg"></div></div>
+      <div class="panel"><div class="sec-t">Top exception reasons</div><div id="reasons"></div></div>
+    </div>
+    <div class="panel">
+      <div class="filters" id="filters">
+        <button class="chip on" data-f="ALL">All</button><button class="chip" data-f="APPROVE">Approved</button><button class="chip" data-f="HOLD">On hold</button><button class="chip" data-f="REJECT">Rejected</button>
+        <input class="search" id="q" placeholder="Search vendor, invoice no, file…">
+      </div>
+      <div style="overflow-x:auto"><table class="runs"><thead><tr><th>Decision</th><th>Vendor</th><th>Invoice</th><th class="r">Amount</th><th class="hide-sm">Exceptions</th><th class="hide-sm">Routed to</th><th class="r hide-sm">Time</th><th class="r">When</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div id="noruns" class="empty hide" style="padding:40px"><p>No runs yet. Process an invoice and it shows up here.</p></div>
+    </div>
+  </section>
+</main>
+
+<div class="pdfmodal" id="pdfm"><div class="box"><header><b id="pdft"></b><div class="spacer"></div><button class="btn sm" id="pdfx">Close ✕</button></header><iframe id="pdff" title="Invoice PDF"></iframe></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inr=x=>x==null?'—':'₹'+Number(x).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const ago=t=>{const s=Date.now()/1000-t;return s<60?'just now':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':new Date(t*1000).toLocaleDateString()};
+const SYM={pass:'✓',warn:'!',fail:'✕',running:'',pending:''};
+let current=null, poll=null, filter='ALL', samplesList=[], toggled={}, scrolled=false;
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200)}
+
+async function api(u,o){const r=await fetch(u,o);if(!r.ok){let m='Request failed';try{m=(await r.json()).detail||m}catch(e){}throw new Error(m)}return r.json()}
+
+// ---------- routing
+function route(){
+  const h=location.hash||'#run', [v,id]=h.slice(1).split('/');
+  $('#view-run').classList.toggle('hide',v!=='run'); $('#view-dash').classList.toggle('hide',v!=='dash');
+  $('#tab-run').classList.toggle('on',v==='run'); $('#tab-dash').classList.toggle('on',v==='dash');
+  if(v==='dash') loadDash();
+  if(v==='run'&&id&&id!==current) watch(id);
+  if(v==='run'&&!id&&!current){$('#empty').classList.remove('hide');$('#run').classList.add('hide')}
+}
+addEventListener('hashchange',route);
+
+// ---------- samples + upload
+async function loadSamples(){
+  samplesList=await api('/api/samples'); $('#deckcount').textContent=samplesList.length+' invoices';
+  $('#samples').innerHTML=samplesList.map((s,i)=>`<div class="sample ${s.kind}" data-f="${esc(s.file)}" tabindex="0" role="button">
+    <span class="n">${String(i+1).padStart(2,'0')}</span><div style="min-width:0"><b>${esc(s.title)}</b><span>${esc(s.desc)}</span></div>
+    <a class="pv" data-pv="${esc(s.file)}" title="View the source PDF">view</a></div>`).join('');
+  document.querySelectorAll('.sample').forEach(el=>{
+    el.onclick=e=>{if(e.target.dataset.pv){e.stopPropagation();showPdf(e.target.dataset.pv);return}submit({sample:el.dataset.f})};
+    el.onkeydown=e=>{if(e.key==='Enter')el.click()};
+  });
+}
+function showPdf(f){$('#pdft').textContent=f;$('#pdff').src='/api/samples/'+encodeURIComponent(f);$('#pdfm').classList.add('show')}
+$('#pdfx').onclick=()=>{$('#pdfm').classList.remove('show');$('#pdff').src='about:blank'};
+$('#pdfm').onclick=e=>{if(e.target.id==='pdfm')$('#pdfx').click()};
+addEventListener('keydown',e=>{if(e.key==='Escape')$('#pdfx').click()});
+
+async function submit({sample,file}){
+  const fd=new FormData(); if(sample)fd.append('sample',sample); if(file)fd.append('file',file);
+  try{const r=await api('/api/runs',{method:'POST',body:fd}); location.hash='#run/'+r.id; refreshCount()}
+  catch(e){toast('⚠ '+e.message)}
+}
+const drop=$('#drop'), fileIn=$('#file');
+fileIn.onchange=()=>{if(fileIn.files[0])submit({file:fileIn.files[0]});fileIn.value=''};
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)submit({file:f})});
+
+// ---------- live run
+function watch(id){
+  current=id; toggled={}; scrolled=false; clearInterval(poll); $('#empty').classList.add('hide'); $('#run').classList.remove('hide');
+  const tick=async()=>{try{const r=await api('/api/runs/'+id); renderRun(r); if(r.status!=='running'){clearInterval(poll);refreshCount()}}catch(e){clearInterval(poll);$('#run').innerHTML='<div class="panel empty"><p>Run not found. It may have been cleared by a reset.</p></div>'}};
+  tick(); poll=setInterval(tick,300);
+}
+function renderRun(r){
+  const st=r.stages, done=st.filter(s=>!['pending','running'].includes(s.status)).length, running=r.status==='running';
+  const elapsed=running?((Date.now()/1000-r.created).toFixed(1)+'s'):(r.duration+'s');
+  let h=`<div class="panel"><div class="runhead"><div style="min-width:0;flex:1"><h2>${esc(r.filename)}</h2>
+    <div class="meta mono">run ${r.id} · ${new Date(r.created*1000).toLocaleTimeString()} · ${elapsed}</div></div>
+    ${running?'<span class="live"><i></i>PROCESSING</span>':`<span class="badge ${r.decision}">${r.decision}</span>`}
+    ${samplesList.some(s=>s.file===r.filename)?`<button class="btn sm" onclick="showPdf('${esc(r.filename)}')">View PDF</button>`:''}</div>
+    <div class="progress"><div style="width:${done/st.length*100}%"></div></div><div class="stages">`;
+  st.forEach((s,i)=>{
+    const isOpen=s.checks&&(toggled[s.key]??['fail','warn'].includes(s.status));
+    h+=`<div class="stage ${s.status} ${!['pending','running'].includes(s.status)?'done':''}"><div class="dot">${SYM[s.status]||''}${s.status==='pending'||s.status==='running'?i+1:''}</div>
+      <div class="sbody"><div class="stitle" data-k="${s.key}"><b>${esc(s.label)}</b><span class="sum">${s.status==='running'?'working…':esc(s.summary||'')}</span>${s.ms!=null?`<span class="ms">${s.checks?(isOpen?'▾':'▸'):''} ${s.ms}ms</span>`:''}</div>
+      ${s.status==='running'?'<div class="skeleton" style="margin-top:10px"></div>':''}
+      ${isOpen?`<div class="checks">${s.checks.map(c=>`<div class="chk ${c.ok}"><span class="s">${SYM[c.ok]}</span><span class="l">${esc(c.label)}</span><span class="d">${esc(c.detail)}</span></div>`).join('')}</div>`:''}
+      </div></div>`;
+  });
+  h+='</div></div>';
+  if(r.status==='done'&&r.output) h+=decisionCard(r.output);
+  if(r.status==='error') h+=`<div class="panel decision"><div class="dtop"><div class="stamp ERROR">ERROR</div><div><h3>Processing failed safely: nothing was approved.</h3><p class="meta">Expand the failed stage above for the error. The invoice is routed to manual review.</p></div></div></div>`;
+  const y=scrollY; $('#run').innerHTML=h; scrollTo(0,y);
+  document.querySelectorAll('.stitle').forEach(el=>el.onclick=()=>{const k=el.dataset.k,s=r.stages.find(x=>x.key===k);toggled[k]=!(toggled[k]??['fail','warn'].includes(s.status));renderRun(r)});
+  if(r.status!=='running'&&!scrolled){scrolled=true;const d=document.querySelector('.decision');if(d&&r.created>Date.now()/1000-30)setTimeout(()=>d.scrollIntoView({behavior:'smooth',block:'center'}),150)}
+  const cp=$('#copymail'); if(cp)cp.onclick=()=>{navigator.clipboard?.writeText($('#mailbody').innerText);toast('Email copied to clipboard')};
+}
+function decisionCard(o){
+  const res=o.result, f=o.fields||{}, flags=res.flags||[];
+  const fl=flags.length?flags.map(x=>`<div class="flag ${x.severity}"><code>${x.code}</code>${esc(x.message)}</div>`).join(''):`<div class="flag info" style="border-color:var(--ok);background:var(--ok-bg)"><code style="color:var(--ok)">ALL_CHECKS_PASSED</code>Vendor approved, bank verified, PO matched within balance, no duplicates.</div>`;
+  const items=(f.line_items||[]).map(i=>`<tr><td>${esc(i.description)}</td><td class="r mono">${i.qty}</td><td class="r mono">${inr(i.amount)}</td></tr>`).join('');
+  return `<div class="panel decision"><div class="dtop"><div class="stamp ${res.decision}">${res.decision==='APPROVE'?'APPROVED':res.decision==='HOLD'?'ON HOLD':'REJECTED'}</div>
+    <div><h3>${esc(res.headline)}</h3><span class="route">→ ${esc(res.route)}</span></div></div>
+    <div class="dgrid"><section><p class="sec-t">Why</p>${fl}</section>
+    <section><p class="sec-t">What we read · ${esc(o.extractor)}${o.read_mode==='ocr'?` · OCR ${Math.round(o.ocr_confidence*100)}%`:''}</p>
+      <dl class="kv"><dt>Vendor</dt><dd>${esc(f.vendor_name)}</dd><dt>Invoice no.</dt><dd>${esc(f.invoice_no)||'—'}</dd><dt>Date</dt><dd>${esc(f.invoice_date)||'—'}</dd>
+      <dt>PO</dt><dd>${esc(f.po_ref)||(o.po?esc(o.po.po)+' <span class="tag">inferred</span>':'—')}</dd><dt>Subtotal</dt><dd>${inr(f.subtotal)}</dd><dt>Tax</dt><dd>${inr(f.tax)}</dd><dt>Total</dt><dd><b>${inr(f.total)}</b></dd></dl>
+      ${items?`<table style="margin-top:14px"><thead><tr><th>Line item</th><th class="r">Qty</th><th class="r">Amount</th></tr></thead><tbody>${items}</tbody></table>`:''}
+    </section></div>
+    ${res.email?`<div class="email"><div class="eh"><b>✉ Draft to vendor</b><span class="mono" style="color:var(--mute)">${esc(res.email.to)}</span><div class="spacer"></div><button class="btn sm" id="copymail">Copy</button></div>
+      <pre id="mailbody"><b>Subject:</b> ${esc(res.email.subject)}\n\n${esc(res.email.body)}</pre></div>`:''}
+    <details class="raw"><summary>Audit trail: raw text the process read</summary><pre>${esc(o.raw_text)}</pre></details></div>`;
+}
+
+// ---------- dashboard
+async function loadDash(){
+  const runs=await api('/api/runs'); window._runs=runs; $('#runcount').textContent=runs.length;
+  const d=runs.filter(r=>r.status==='done'), n=d.length, c=k=>d.filter(r=>r.decision===k).length;
+  const ap=c('APPROVE'),ho=c('HOLD'),rj=c('REJECT'), val=d.filter(r=>r.decision==='APPROVE').reduce((a,r)=>a+(r.total||0),0),
+    blocked=d.filter(r=>r.decision==='REJECT').reduce((a,r)=>a+(r.total||0),0), avg=n?d.reduce((a,r)=>a+(r.duration||0),0)/n:0;
+  $('#kpis').innerHTML=[['Invoices processed',n,''],['Auto-approved',ap,n?Math.round(ap/n*100)+'%':''],['On hold',ho,''],['Rejected',rj,''],
+    ['Value approved',inr(val).replace('.00',''),''],['Payments blocked',inr(blocked).replace('.00',''),'']].map(([l,v,s],i)=>
+    `<div class="panel kpi ${i===5?'hero':''}"><div class="l">${l}</div><div class="v mono" style="font-family:var(--display)">${v}<small>${s}</small></div></div>`).join('');
+  const seg=[[ap,'var(--ok)','Approved'],[ho,'var(--warn)','On hold'],[rj,'var(--bad)','Rejected']];
+  $('#mix').innerHTML=n?seg.map(([v,col])=>`<div style="width:${v/n*100}%;background:${col}"></div>`).join(''):'';
+  $('#mixleg').innerHTML=seg.map(([v,col,l])=>`<span><i style="background:${col}"></i>${l} <b class="mono">${v}</b></span>`).join('')+`<span style="color:var(--mute)">avg ${avg.toFixed(1)}s / invoice</span>`;
+  const cnt={}; d.forEach(r=>(r.flags||[]).forEach(f=>cnt[f]=(cnt[f]||0)+1));
+  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,5), mx=top[0]?.[1]||1;
+  $('#reasons').innerHTML=top.length?top.map(([k,v])=>`<div class="hbar"><span class="mono" style="font-size:12px">${k}</span><div class="t"><div style="width:${v/mx*100}%"></div></div><b class="mono">${v}</b></div>`).join(''):'<p class="meta" style="color:var(--mute)">No exceptions yet.</p>';
+  renderRows();
+}
+function renderRows(){
+  const q=$('#q').value.toLowerCase(), rs=(window._runs||[]).filter(r=>(filter==='ALL'||r.decision===filter)&&(!q||[r.vendor,r.invoice_no,r.filename].join(' ').toLowerCase().includes(q)));
+  $('#noruns').classList.toggle('hide',rs.length>0);
+  $('#rows').innerHTML=rs.map(r=>`<tr onclick="location.hash='#run/${r.id}'"><td><span class="badge ${r.status==='running'?'RUNNING':r.decision}">${r.status==='running'?'RUNNING':r.decision}</span></td>
+    <td><b>${esc(r.vendor||'—')}</b><div class="mono" style="font-size:11.5px;color:var(--mute)">${esc(r.filename)}</div></td><td class="mono">${esc(r.invoice_no||'—')}</td>
+    <td class="r mono">${inr(r.total)}</td><td class="hide-sm">${(r.flags||[]).map(f=>`<span class="tag">${f}</span>`).join('')||'<span style="color:var(--mute)">—</span>'}</td>
+    <td class="hide-sm">${esc(r.route||'')}</td><td class="r mono hide-sm">${r.duration?r.duration+'s':''}</td><td class="r" style="color:var(--mute);white-space:nowrap">${ago(r.created)}</td></tr>`).join('');
+}
+$('#filters').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;filter=b.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===b));renderRows()};
+$('#q').oninput=renderRows;
+async function refreshCount(){try{const r=await api('/api/runs');$('#runcount').textContent=r.length;if(!$('#view-dash').classList.contains('hide'))loadDash()}catch(e){}}
+$('#reset').onclick=async()=>{if(!confirm('Clear all runs and restore the seeded payment ledger?'))return;await api('/api/reset',{method:'POST'});current=null;clearInterval(poll);location.hash='#run';$('#empty').classList.remove('hide');$('#run').classList.add('hide');refreshCount();toast('Demo reset: ledger restored')};
+api('/api/master').then(m=>$('#policy').textContent=`Tolerance ≤${m.policy.variance_tolerance_pct}% · ≤₹${(m.policy.variance_tolerance_abs/1000)}k · ${m.vendors.length} vendors · ${m.purchase_orders.length} POs`);
+loadSamples(); refreshCount(); route();
+</script>
+</body>
+</html>

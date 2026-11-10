@@ -1,0 +1,29 @@
+{
+  "policy": {
+    "currency": "INR",
+    "variance_tolerance_pct": 2.0,
+    "variance_tolerance_abs": 10000,
+    "math_tolerance_abs": 1.0,
+    "ocr_review_threshold": 0.80
+  },
+  "vendors": [
+    {"id": "V001", "name": "Northwind Office Supplies", "status": "approved", "bank_account": "918020045573821", "ifsc": "UTIB0000412", "contact": "billing@northwind-supplies.in"},
+    {"id": "V002", "name": "Kestrel Logistics", "status": "approved", "bank_account": "50100234414417", "ifsc": "HDFC0001267", "contact": "accounts@kestrel-logistics.in"},
+    {"id": "V003", "name": "Brightline IT Services", "status": "approved", "bank_account": "039105002211", "ifsc": "ICIC0000391", "contact": "finance@brightline.io"},
+    {"id": "V004", "name": "Apex Packaging Co", "status": "approved", "bank_account": "20381177307730", "ifsc": "SBIN0004431", "contact": "ar@apexpack.in"},
+    {"id": "V005", "name": "Quickfix Facilities", "status": "kyc_pending", "bank_account": "", "ifsc": "", "contact": "hello@quickfix.co.in"}
+  ],
+  "purchase_orders": [
+    {"po": "PO-2026-1029", "vendor_id": "V001", "amount": 59000.00, "status": "open", "description": "Stationery Q3 restock"},
+    {"po": "PO-2026-1041", "vendor_id": "V001", "amount": 118000.00, "status": "open", "description": "Paper and toner, Nov"},
+    {"po": "PO-2026-1063", "vendor_id": "V002", "amount": 250000.00, "status": "open", "description": "Chennai to Pune freight, Oct"},
+    {"po": "PO-2026-1064", "vendor_id": "V002", "amount": 70800.00, "status": "open", "description": "Last-mile delivery, Nov"},
+    {"po": "PO-2026-1077", "vendor_id": "V003", "amount": 354000.00, "status": "open", "description": "ERP integration, 2 milestones"},
+    {"po": "PO-2026-1102", "vendor_id": "V004", "amount": 88500.00, "status": "open", "description": "Corrugated boxes, 5000 units"},
+    {"po": "PO-2026-1110", "vendor_id": "V004", "amount": 240000.00, "status": "open", "description": "Pallet wrap, annual"}
+  ],
+  "ledger_seed": [
+    {"vendor_id": "V001", "invoice_no": "INV-NW-3290", "po": "PO-2026-1029", "amount": 59000.00, "invoice_date": "2026-10-14", "status": "paid"},
+    {"vendor_id": "V003", "invoice_no": "BL-901", "po": "PO-2026-1077", "amount": 177000.00, "invoice_date": "2026-09-30", "status": "paid"}
+  ]
+}
