@@ -34,18 +34,26 @@ def read_pdf(path):
 
 
 def _ocr(path):
+    """Single-pass OCR (text + confidence from one tesseract call) so it stays fast on small servers."""
     import pytesseract
     from PIL import Image
     with tempfile.TemporaryDirectory() as d:
-        subprocess.run(["pdftoppm", "-r", "220", "-png", path, os.path.join(d, "p")], check=True, capture_output=True)
-        texts, confs = [], []
+        subprocess.run(["pdftoppm", "-r", "150", "-gray", "-png", path, os.path.join(d, "p")], check=True, capture_output=True)
+        lines, confs = [], []
         for f in sorted(os.listdir(d)):
-            im = Image.open(os.path.join(d, f))
-            texts.append(pytesseract.image_to_string(im))
-            data = pytesseract.image_to_data(im, output_type=pytesseract.Output.DICT)
-            confs += [float(c) for c, w in zip(data["conf"], data["text"]) if w.strip() and float(c) >= 0]
+            data = pytesseract.image_to_data(Image.open(os.path.join(d, f)), config="--psm 6", output_type=pytesseract.Output.DICT)
+            cur, key = [], None
+            for i, w in enumerate(data["text"]):
+                k = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+                if k != key and cur:
+                    lines.append(" ".join(cur)); cur = []
+                key = k
+                if w.strip():
+                    cur.append(w)
+                    if float(data["conf"][i]) >= 0: confs.append(float(data["conf"][i]))
+            if cur: lines.append(" ".join(cur))
     conf = (sum(confs) / len(confs) / 100) if confs else 0.0
-    return "\n".join(texts), "ocr", round(conf, 2)
+    return "\n".join(lines), "ocr", round(conf, 2)
 
 
 def _line_match(lines, label_re, value_re):
