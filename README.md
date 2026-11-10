@@ -1,87 +1,71 @@
-# Stampd: invoice processing, from PDF to decision
+# Stampd: invoice processing, from PDF to an explained decision
 
-**Zamp ASA case study · PS-1 (Finance / AP)**
+**Zamp ASA case study · PS-1 (Finance / Accounts Payable)** · Live: https://stampd-jokj.onrender.com
 
-Stampd takes a vendor invoice PDF (native or scanned) and produces a decision of **APPROVE**, **HOLD** or **REJECT**. Every decision comes with reason codes, a routing destination, a drafted vendor email where one is needed, and a full audit trail of each stage.
+Stampd takes a vendor invoice PDF (native or scanned) and decides **APPROVE**, **HOLD** or **REJECT**. Every decision comes with:
+- reason codes, in plain English
+- where the invoice is routed (payment run, AP reviewer, procurement, treasury)
+- a drafted email to the vendor where one is needed
+- a reviewer step: approve or reject, with a mandatory reason when overruling the system
+- a downloadable audit record
 
-## Run it
+> On Render's free tier the first visit after a quiet period takes about 50 seconds while the server wakes up.
 
-```bash
-# needs Python 3.10+, plus tesseract and poppler for scanned invoices
-#   macOS:   brew install tesseract poppler
-#   Ubuntu:  sudo apt install tesseract-ocr poppler-utils
-./run.sh            # → http://localhost:8000
-```
+## Design principle: AI reads, rules decide
+OCR and extraction only **read** the invoice. Every payment decision is a **deterministic rule**, so the same invoice always gets the same answer and every answer can be explained to an auditor. Extraction can be swapped for Claude (set `ANTHROPIC_API_KEY`) without changing any decision logic.
 
-**Docker:** `docker build -t stampd . && docker run -p 8000:8000 stampd`
-
-**Deploy (live link):** push this folder to GitHub → Render.com → *New Web Service* → it detects the `Dockerfile` → deploy. On the free tier it sleeps when idle, so open the link 1 minute before your demo.
-
-## Pipeline
-
-| # | Stage | What happens |
+## Pipeline (each stage streams live in the UI)
+| # | Stage | What it does |
 |---|---|---|
-| 1 | Ingest | Detects whether the PDF has a text layer. If not, it's a scan, so the stage rasterises it and runs OCR, recording a confidence score. |
-| 2 | Extract | Pulls vendor, invoice no., date, PO ref, subtotal, tax, total, bank a/c, IFSC and line items. Handles label variants such as *Invoice No / Bill # / Invoice Number* and *Grand Total / Amount Due / Total Payable*. |
-| 3 | Validate | Checks that the mandatory fields are present, that line items sum to the subtotal, that subtotal + tax = total (±₹1), and that the tax rate is a valid GST slab. |
-| 4 | Vendor | Fuzzy-matches the vendor against the vendor master, checks the vendor is approved for payment, and checks the **bank account matches the verified one**. |
-| 5 | PO match | Matches an explicit PO, or **infers** one from vendor + amount when none is printed. Checks the invoice against the **remaining** PO balance, which covers split invoices, and applies tolerance. |
-| 6 | Duplicate | Matches normalised invoice numbers (`INV/NW/3290` = `INV-NW-3290`) and same vendor + amount + PO against the payment ledger. |
-| 7 | Decision | Combines all flags into a decision with reason codes, a routing destination and a vendor email draft. |
+| 1 | Ingest | Detects a text layer or a scan; runs OCR with a confidence score. Rejects encrypted, corrupt or oversized PDFs safely. |
+| 2 | Extract | Vendor, invoice no., date, PO, currency, subtotal, tax (CGST+SGST/IGST summed), total, bank a/c, IFSC, line items (optional HSN). Handles many label variants and date formats. Fills one missing amount from the other two and marks it *derived*. |
+| 3 | Validate | Mandatory fields; line items add up to the subtotal; subtotal + tax = total; valid GST slab; date not in the future or stale; currency matches the POs. |
+| 4 | Vendor | Fuzzy match against the vendor master; vendor approved (KYC done); **bank account matches the verified one**. |
+| 5 | PO match | Explicit PO, or **inferred** from vendor + amount (always held for a human). Checks the **remaining** PO balance, which catches split invoices, and applies a 2% **and** ₹10k tolerance. |
+| 6 | Duplicate | Normalised invoice numbers (`INV/NW/3290` = `INV-NW-3290`) plus vendor + amount + PO, against the payment ledger. |
+| 7 | Decision | Severity roll-up into a decision, route, headline, vendor email and audit record. |
 
-**Key design choice:** OCR and the parser only *read* the invoice. **Every decision is a deterministic rule**, so the same invoice always gets the same answer and every answer can be explained to an auditor. AI is used where reading is fuzzy, never where a payment is decided.
-
-## Decision rules
-
-| Severity | Rule | Routed to |
+## Test deck (built into the app)
+| # | Scenario | Result |
 |---|---|---|
-| REJECT | Vendor not in master / not approved (KYC pending) | Back to vendor |
-| REJECT | Duplicate of a paid or approved invoice | Back to vendor |
-| HOLD | Bank account differs from the vendor master | Treasury / fraud check |
-| HOLD | Cumulative billing exceeds PO (split invoices) / variance beyond tolerance | Procurement (PO owner) |
-| HOLD | PO inferred rather than printed · PO missing · PO belongs to another vendor | AP reviewer |
-| HOLD | Missing invoice no./date/total · arithmetic mismatch · OCR confidence < 80% | AP reviewer |
-| info | Over PO by ≤2% **and** ≤₹10,000 | Auto-approve, variance noted |
-
-Policy values live in `data/master.json` (`policy`).
-
-## Test deck (`samples/pdfs/`)
-
-| File | Scenario | Expected |
-|---|---|---|
-| 01 | Happy path: clean PDF, exact PO match | APPROVE |
-| 02 | 1.4% over PO, inside tolerance | APPROVE (variance noted) |
-| 03 | **Split PO**: 2nd invoice pushes cumulative billing ₹35,400 over PO | HOLD → Procurement |
-| 04 | **Disguised duplicate**: resent as `INV/NW/3290` | REJECT |
-| 05 | **Scanned image, no PO**: OCR + PO inferred | HOLD → AP review |
-| 06 | **Bank details changed**: new remit-to account | HOLD → Treasury |
+| 01 | Clean invoice, exact PO match | APPROVE |
+| 02 | 1.4% over the PO, inside tolerance | APPROVE (variance noted) |
+| 03 | Split PO: 2nd milestone pushes cumulative billing past the PO | HOLD → Procurement |
+| 04 | Disguised duplicate (`INV/NW/3290` vs `INV-NW-3290`) | REJECT |
+| 05 | Scanned image, no PO printed | HOLD (OCR + inferred PO) |
+| 06 | Bank details changed (payment-fraud pattern) | HOLD → Treasury |
 | 07 | Vendor still in KYC | REJECT |
+| 08 | Different layout: CGST+SGST, "Rs.", dd/mm/yyyy, HSN column | APPROVE |
+| 09 | Line items don't add up to the subtotal | HOLD + vendor email |
+| 10 | Billed in USD against an INR PO | HOLD → Treasury (FX) |
 
-Re-running 01 after it's approved is caught as a duplicate, because approved invoices are written to the ledger. **Reset demo** (top right) restores the seeded ledger.
+Approved invoices are written to the ledger, so re-running one is caught as a duplicate. **Reset demo** restores the seeded ledger.
 
-## Assumptions (to reference in the interview)
-- Invoices arrive one at a time as PDFs. Email ingestion is a front-end to this pipeline and is out of scope.
-- The PO dataset, vendor master and payment ledger are JSON/SQLite stand-ins for an ERP. Amounts are tax-inclusive INR.
-- Tolerance is a dual cap (2% **and** ₹10k), so a 2% variance on a ₹50L invoice still goes to a human.
-- When a PO is inferred, the invoice is *always* held. A plausible guess must never auto-pay.
-- A bank-detail change is always held, even if everything else is perfect. This is the most common real-world AP fraud.
+## Reviewer step
+Every finished run has a reviewer panel. Confirming the system's decision needs no comment. **Overruling it requires a reason** (8+ characters), which is stored with the reviewer's name and time. Duplicates can never be approved. Approvals go into the payment ledger, which then feeds duplicate detection and PO-balance checks.
 
-## Optional: Claude-based extraction
-The rules parser covers the invoice formats in the test deck. For arbitrary vendor layouts, switch extraction to Claude:
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   EXTRACTOR=llm
+## API
+`POST /api/runs` (file or `sample`) · `GET /api/runs` · `GET /api/runs/{id}` · `GET /api/runs/{id}/pdf` · `GET /api/runs/{id}/audit` · `POST /api/runs/{id}/review` · `GET /api/config` · `POST /api/reset`
+
+## Run locally
+- **Windows:** double-click `start.bat`. It installs Python if needed and opens http://localhost:8000.
+- **Mac/Linux:** `brew install tesseract poppler` (or apt), then `./run.sh`.
+- **Docker:** `docker build -t stampd . && docker run -p 8000:8000 stampd`.
+
+**Optional Claude extraction:** set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`). If the API call fails, it falls back to the rules parser.
+
+## Assumptions
+- One invoice per PDF. The vendor master, POs and ledger are JSON/SQLite stand-ins for an ERP.
+- Amounts are tax-inclusive INR. Foreign currency is always held for treasury.
+- Tolerance is a dual cap (≤2% **and** ≤₹10,000), so large invoices can't hide big rupee variances.
+- An inferred PO or a bank change is **always** held, however clean everything else looks.
+
+## Layout
 ```
-If the LLM call fails, the process falls back to the rules parser. *This path was not tested in the build environment because no API key was available. Verify it before demoing it.*
-
-## Project layout
-```
-app/main.py       API, run store (SQLite), background execution
 app/pipeline.py   7-stage decision pipeline and rules
-app/extract.py    PDF text / OCR + field extraction
+app/extract.py    PDF text / OCR + rules parser + optional Claude extractor
+app/main.py       API, SQLite run store and ledger, reviewer actions, audit export
 data/master.json  vendors, POs, policy, seeded payment ledger
-samples/          invoice generator + 7 test PDFs
-static/index.html UI: live run view + dashboard
+samples/          invoice generator (10 scenarios) + cached OCR for Windows
+static/index.html UI: live run, compare-with-invoice view, reviewer panel, dashboard
 ```
-
-## What I'd build next
-Email inbox ingestion · LLM extraction by default with field-level confidence · reviewer actions (approve-override with reason) · ERP connector (Tally / NetSuite) · multi-currency · line-level 3-way match against GRNs.

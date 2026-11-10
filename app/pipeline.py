@@ -1,5 +1,5 @@
 """The decision pipeline. AI/OCR only *reads* the invoice; every decision is a deterministic, auditable rule."""
-import re, time, difflib
+import re, time, difflib, datetime
 from .extract import read_pdf, extract
 
 STAGES = [
@@ -60,6 +60,9 @@ def run_pipeline(path, filename, master, ledger, emit):
         c.append({"label": label, "ok": "pass" if v not in (None, "") else ("warn" if k == "po_ref" else "fail"),
                   "detail": shown if v not in (None, "") else "Not found on invoice"})
     c.append({"label": "Line items", "ok": "pass" if f.get("line_items") else "warn", "detail": f"{len(f.get('line_items') or [])} row(s)"})
+    c.append({"label": "Currency", "ok": "pass" if f.get("currency", "INR") == "INR" else "warn", "detail": f.get("currency", "INR")})
+    for k in f.get("_derived") or []:
+        c.append({"label": f"{k.title()} (derived)", "ok": "warn", "detail": "Not printed; computed from the other two amounts"})
     R.stage("extract", worst(c), f"{sum(1 for x in c if x['ok']=='pass')}/{len(c)} fields · {engine}", c, t0)
 
     # 3. VALIDATE
@@ -81,7 +84,23 @@ def run_pipeline(path, filename, master, ledger, emit):
         if not ok: R.flag("MATH_TOTAL", "hold", f"Subtotal + tax = {inr(s)}, but the invoice total is {inr(f['total'])}.")
         rate = f["tax"] / f["subtotal"] * 100 if f["subtotal"] else 0
         c.append({"label": "Tax rate is a valid GST slab", "ok": "pass" if any(abs(rate - r) < 0.05 for r in (0, 5, 12, 18, 28)) else "warn", "detail": f"{rate:.1f}%"})
-    R.stage("validate", worst(c), "Arithmetic & completeness", c, t0)
+    iso = f.get("invoice_date_iso")
+    if iso:
+        d = datetime.date.fromisoformat(iso); today = datetime.date.today(); age = (today - d).days
+        if age < -1:
+            c.append({"label": "Invoice date is not in the future", "ok": "fail", "detail": f"{iso} is {-age} days ahead"})
+            R.flag("FUTURE_DATED", "hold", f"Invoice is dated {iso}, which is in the future. Likely a typo or a pre-billed invoice.")
+        elif age > 180:
+            c.append({"label": "Invoice is recent", "ok": "warn", "detail": f"{age} days old"})
+            R.flag("STALE_INVOICE", "info", f"Invoice is {age} days old. Check it was not already settled offline.")
+        else:
+            c.append({"label": "Invoice date is plausible", "ok": "pass", "detail": f"{iso} · {age} day(s) ago"})
+    elif f.get("invoice_date"):
+        c.append({"label": "Invoice date readable", "ok": "warn", "detail": f"Could not interpret '{f['invoice_date']}'"})
+    if f.get("currency", "INR") != pol["currency"]:
+        c.append({"label": f"Currency is {pol['currency']}", "ok": "fail", "detail": f"Invoice is in {f.get('currency')}"})
+        R.flag("FOREIGN_CURRENCY", "hold", f"Invoice is billed in {f.get('currency')}. POs are in {pol['currency']}, so treasury must apply the payment-date FX rate before matching.")
+    R.stage("validate", worst(c), "Arithmetic, dates & completeness", c, t0)
 
     # 4. VENDOR
     t0 = time.time(); emit("vendor", {"status": "running"}); time.sleep(PACE)
@@ -90,6 +109,11 @@ def run_pipeline(path, filename, master, ledger, emit):
     best = max(master["vendors"], key=lambda v: difflib.SequenceMatcher(None, name_core, v["name"].lower()).ratio())
     score = difflib.SequenceMatcher(None, name_core, best["name"].lower()).ratio()
     if score >= 0.82: vendor = best
+    else:  # vendor name not on the first line: look for any known vendor name anywhere in the header
+        head = text.lower()[:600]
+        for v in master["vendors"]:
+            if v["name"].lower() in head:
+                vendor, score = v, 1.0; f["vendor_name"] = f.get("vendor_name") or v["name"]; break
     if not vendor:
         c.append({"label": "Vendor in vendor master", "ok": "fail", "detail": f"'{f.get('vendor_name')}' not found"})
         R.flag("VENDOR_UNKNOWN", "reject", f"'{f.get('vendor_name')}' is not in the vendor master.")
@@ -138,7 +162,9 @@ def run_pipeline(path, filename, master, ledger, emit):
         else:
             c.append({"label": "PO reference on invoice", "ok": "fail", "detail": "None printed, and no open PO matches the amount"})
             R.flag("PO_MISSING", "hold", "No PO reference and no open PO for this vendor matches. Ask the vendor for the PO number.")
-    if po and total:
+    if po and total and f.get("currency", "INR") != pol["currency"]:
+        c.append({"label": "Amount vs PO balance", "ok": "warn", "detail": f"Skipped: invoice is in {f.get('currency')}, PO is in {pol['currency']}"})
+    elif po and total:
         billed = sum(l["amount"] for l in ledger if l["po"] == po["po"] and l["status"] in ("paid", "approved")
                      and norm_no(l["invoice_no"]) != norm_no(f.get("invoice_no")))
         remaining = round(po["amount"] - billed, 2)
@@ -184,11 +210,12 @@ def run_pipeline(path, filename, master, ledger, emit):
     route = {"REJECT": "Returned to vendor", "HOLD": "AP reviewer queue", "APPROVE": "Scheduled for payment run"}[decision]
     if decision == "HOLD" and any(x["code"] == "BANK_MISMATCH" for x in R.flags): route = "Treasury / fraud check"
     if decision == "HOLD" and any(x["code"] in ("PO_OVERBILLED", "VARIANCE_HIGH") for x in R.flags): route = "Procurement (PO owner)"
+    if decision == "HOLD" and any(x["code"] == "FOREIGN_CURRENCY" for x in R.flags): route = "Treasury (FX rate)"
     headline = {"APPROVE": f"Approved: {inr(total)} matches {po['po'] if po else 'PO'} and all checks passed.",
                 "HOLD": f"On hold: {len(blocking)} issue(s) need a human decision before payment.",
                 "REJECT": "Rejected: this invoice must not be paid as submitted."}[decision]
     email = None
-    if decision == "REJECT" or any(x["code"] in ("PO_MISSING", "MISSING_INVOICE_NO", "MISSING_INVOICE_DATE", "MISSING_TOTAL", "PO_OVERBILLED") for x in R.flags):
+    if decision == "REJECT" or any(x["code"] in ("PO_MISSING", "MISSING_INVOICE_NO", "MISSING_INVOICE_DATE", "MISSING_TOTAL", "PO_OVERBILLED", "FUTURE_DATED", "MATH_LINES", "MATH_TOTAL") for x in R.flags):
         to = (vendor or {}).get("contact", "the vendor")
         bullets = "\n".join(f"  • {x['message']}" for x in blocking)
         email = {"to": to, "subject": f"Invoice {f.get('invoice_no') or '(no number)'}: action needed",

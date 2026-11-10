@@ -15,7 +15,7 @@ def money(x):
 
 
 def invoice(path, *, vendor, address, accent, labels, inv_no, date, po, items,
-            tax_rate=0.18, bank=None, notes=None, bill_to="Meridian Retail Pvt Ltd"):
+            tax_rate=0.18, bank=None, notes=None, bill_to="Meridian Retail Pvt Ltd", sub_override=None, cur="INR"):
     c = canvas.Canvas(path, pagesize=A4)
     c.setFillColor(HexColor(accent)); c.rect(0, H - 18, W, 18, stroke=0, fill=1)
     c.setFillColor(black); c.setFont("Helvetica-Bold", 20); c.drawString(40, H - 70, vendor)
@@ -41,12 +41,13 @@ def invoice(path, *, vendor, address, accent, labels, inv_no, date, po, items,
         y -= 22; amt = qty * rate; sub += amt
         c.drawString(46, y, desc); c.drawRightString(360, y, str(qty))
         c.drawRightString(450, y, money(rate)); c.drawRightString(W - 46, y, money(amt))
+    if sub_override is not None: sub = sub_override
     tax = round(sub * tax_rate, 2); total = round(sub + tax, 2)
     y -= 20; c.line(300, y + 10, W - 40, y + 10)
     c.drawString(310, y - 5, labels.get("sub", "Subtotal")); c.drawRightString(W - 46, y - 5, money(sub))
-    c.drawString(310, y - 22, f"GST @ {int(tax_rate*100)}%"); c.drawRightString(W - 46, y - 22, money(tax))
+    c.drawString(310, y - 22, f"GST @ {int(tax_rate*100)}%" if tax_rate else "Tax (export of service)"); c.drawRightString(W - 46, y - 22, money(tax))
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(310, y - 42, labels.get("total", "Grand Total") + " (INR)"); c.drawRightString(W - 46, y - 42, money(total))
+    c.drawString(310, y - 42, labels.get("total", "Grand Total") + f" ({cur})"); c.drawRightString(W - 46, y - 42, money(total))
     c.setFont("Helvetica", 9); y -= 90
     if bank:
         c.drawString(40, y, "Bank Details"); c.drawString(40, y - 13, f"Account No: {bank[0]}"); c.drawString(40, y - 26, f"IFSC: {bank[1]}")
@@ -72,6 +73,39 @@ def scanify(pdf_path):
         im = Image.merge("RGB", (im, im, im.point(lambda v: max(0, v - 6))))
         im.save(pdf_path, "PDF", resolution=170)
 
+
+
+def invoice_alt(path):
+    """A deliberately different layout: GST split into CGST+SGST, Rs. amounts, S.No and HSN columns, dd/mm/yyyy date."""
+    c = canvas.Canvas(path, pagesize=A4)
+    c.setFont("Helvetica-Bold", 13); c.drawCentredString(W / 2, H - 45, "TAX INVOICE")
+    c.setFont("Helvetica-Bold", 17); c.drawString(40, H - 80, "Apex Packaging Co")
+    c.setFont("Helvetica", 9); c.drawString(40, H - 95, "22 Ambattur Industrial Estate, Chennai 600058 | GSTIN 33AABCA5532P1Z1")
+    c.rect(40, H - 175, W - 80, 65)
+    c.setFont("Helvetica", 10)
+    c.drawString(50, H - 128, "Inv. No.: APX/26-27/0198"); c.drawString(50, H - 145, "Inv. Date: 08/11/2026")
+    c.drawString(50, H - 162, "Purchase Order: PO-2026-1110")
+    c.drawString(320, H - 128, "Buyer: Meridian Retail Pvt Ltd"); c.drawString(320, H - 145, "Place of supply: Tamil Nadu (33)")
+    y = H - 205
+    c.setFont("Helvetica-Bold", 9)
+    for x, t in [(46, "S.No"), (80, "Item"), (300, "HSN"), (360, "Qty"), (450, "Rate"), (W - 46, "Amount")]:
+        (c.drawRightString if t in ("Rate", "Amount", "Qty") else c.drawString)(x, y, t)
+    c.line(40, y - 5, W - 40, y - 5); c.setFont("Helvetica", 10)
+    rows = [("Stretch wrap film 23 micron", "3920", 400, 200.00), ("Pallet strapping roll", "3926", 50, 400.00)]
+    sub = 0
+    for i, (d, h, q, r) in enumerate(rows, 1):
+        y -= 20; a = q * r; sub += a
+        c.drawString(46, y, str(i)); c.drawString(80, y, d); c.drawString(300, y, h)
+        c.drawRightString(360, y, str(q)); c.drawRightString(450, y, "Rs. " + money(r)); c.drawRightString(W - 46, y, "Rs. " + money(a))
+    cg = round(sub * 0.09, 2); tot = sub + 2 * cg
+    y -= 30; c.line(300, y + 12, W - 40, y + 12)
+    for lbl, v in [("Taxable Amount", sub), ("CGST @ 9%", cg), ("SGST @ 9%", cg)]:
+        c.drawString(310, y, lbl); c.drawRightString(W - 46, y, "Rs. " + money(v)); y -= 16
+    c.setFont("Helvetica-Bold", 11); c.drawString(310, y - 4, "Total Amount"); c.drawRightString(W - 46, y - 4, "Rs. " + money(tot))
+    c.setFont("Helvetica", 9); y -= 50
+    c.drawString(40, y, "Bank: State Bank of India, Ambattur"); c.drawString(40, y - 13, "A/c No: 20381177307730"); c.drawString(40, y - 26, "IFSC Code: SBIN0004431")
+    c.drawString(40, 60, "Amount in words: Rupees One Lakh Eighteen Thousand Only")
+    c.save()
 
 NW = dict(vendor="Northwind Office Supplies Pvt Ltd", address=["14 Industrial Estate, Guindy", "Chennai 600032 | GSTIN 33AAACN4421K1Z5"],
           accent="#1d4ed8", labels={"no": "Invoice No", "date": "Invoice Date", "po": "PO Ref"})
@@ -107,4 +141,13 @@ if __name__ == "__main__":
             accent="#be123c", labels={"no": "Invoice No", "date": "Invoice Date", "po": "PO Ref"},
             inv_no="QF-0042", date="08-Nov-2026", po="PO-2026-1041",
             items=[("AC servicing, 3rd floor", 12, 1800.00)], bank=("7711002233445", "YESB0000123"))
+    invoice_alt(p("08_different_layout_apex.pdf"))
+    invoice(p("09_math_error_kestrel.pdf"), **KL, inv_no="KL-5541", date="09-Nov-2026", po="PO-2026-1064",
+            items=[("Last-mile delivery, Chennai metro", 1, 50000.00), ("Weekend surcharge", 1, 5000.00)],
+            sub_override=60000.00, bank=("50100234414417", "HDFC0001267"))
+    invoice(p("10_foreign_currency_brightline.pdf"), vendor="Brightline IT Services", address=["Level 4, Tidel Park, Taramani", "GSTIN 33AAGCB1290M1Z8"],
+            accent="#7c3aed", labels={"no": "Invoice Number", "date": "Date", "po": "Purchase Order", "total": "Total Payable", "sub": "Subtotal"},
+            inv_no="BL-920", date="09-Nov-2026", po="PO-2026-1077", tax_rate=0, cur="USD",
+            items=[("Cloud licence pass-through (USD)", 3, 400.00)], bank=("039105002211", "ICIC0000391"),
+            notes=["All amounts in USD. Please remit in USD."])
     print("\n".join(sorted(os.listdir(OUT))))
