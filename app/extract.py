@@ -235,28 +235,60 @@ def parse_claude(text):
     return _clean_llm(json.loads(raw[raw.find("{"): raw.rfind("}") + 1]), text)
 
 
+def _gemini_call(model, prompt, timeout=60):
+    import urllib.request
+    cfg = {"temperature": 0, "responseMimeType": "application/json"}
+    if "2.5" in model or "flash-latest" in model:
+        cfg["thinkingConfig"] = {"thinkingBudget": 0}  # extraction needs no reasoning; keeps latency low
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": cfg}).encode()
+    req = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+                                 headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.load(r)
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
 def parse_gemini(text):
     """Google Gemini via plain REST (free tier available). Tries a few model ids so a renamed model doesn't break it."""
-    import urllib.request, urllib.error
-    body = json.dumps({"contents": [{"parts": [{"text": LLM_PROMPT + text}]}],
-                       "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}).encode()
-    last = None
+    import urllib.error
+    errors = []
     for model in GEMINI_MODELS:
-        req = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
-                                     headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
         try:
-            with urllib.request.urlopen(req, timeout=40) as r:
-                data = json.load(r)
-            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            raw = _gemini_call(model, LLM_PROMPT + text)
             f = _clean_llm(json.loads(raw[raw.find("{"): raw.rfind("}") + 1]), text)
             f["_model"] = model
             return f
         except urllib.error.HTTPError as e:
-            last = f"{model}: HTTP {e.code}"
-            if e.code not in (404, 400): break  # quota/auth errors won't be fixed by another model id
+            detail = ""
+            try: detail = json.loads(e.read().decode()).get("error", {}).get("message", "")[:120]
+            except Exception: pass
+            errors.append(f"{model}: HTTP {e.code} {detail}".strip())
+            if e.code in (401, 403, 429): break  # auth/quota problems won't be fixed by another model id
         except Exception as e:
-            last = f"{model}: {e}"
-    raise RuntimeError(last or "Gemini unavailable")
+            errors.append(f"{model}: {str(e)[:80]}")
+    raise RuntimeError(" | ".join(errors) or "Gemini unavailable")
+
+
+def llm_selfcheck():
+    """Tiny live call per model, for the /api/llm-check diagnostics endpoint. Never returns the key."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        return {"configured": False}
+    import urllib.error
+    res = {}
+    for model in GEMINI_MODELS:
+        t0 = __import__("time").time()
+        try:
+            out = _gemini_call(model, 'Return the JSON {"ok": true}', timeout=30)
+            res[model] = {"ok": True, "secs": round(__import__("time").time() - t0, 1), "reply": out[:40]}
+            break
+        except urllib.error.HTTPError as e:
+            msg = ""
+            try: msg = json.loads(e.read().decode()).get("error", {}).get("message", "")[:160]
+            except Exception: pass
+            res[model] = {"ok": False, "http": e.code, "error": msg}
+        except Exception as e:
+            res[model] = {"ok": False, "error": str(e)[:120]}
+    return {"configured": True, "models": res}
 
 
 def extractor_name():

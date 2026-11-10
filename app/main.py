@@ -9,7 +9,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Reques
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .pipeline import run_pipeline, STAGES, norm_no
-from .extract import extractor_name
+from .extract import extractor_name, llm_selfcheck
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "stampd_v2.db")
@@ -249,6 +249,11 @@ def onboard(rid: str, request: Request, payload: dict = Body(default={})):
 def config(request: Request):
     m = master_for(sandbox_of(request))
     return {"extractor": extractor_name(), "policy": MASTER["policy"], "vendors": len(m["vendors"]), "pos": len(m["purchase_orders"])}
+
+
+@app.get("/api/llm-check")
+def llm_check():
+    return llm_selfcheck()
 
 
 @app.get("/api/master")
