@@ -147,6 +147,15 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
 .pdfmodal .box header{position:static;display:flex;padding:10px 14px;align-items:center;gap:10px;background:var(--card)}
 .pdfmodal iframe{flex:1;border:0;width:100%}
 .hide{display:none!important}
+.inboxgrid{display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start}
+.mail{display:grid;grid-template-columns:40px 1fr auto;gap:14px;align-items:center;padding:16px 18px;border-top:1px solid var(--line)}
+.mail:first-child{border-top:0}
+.mail .av{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font:700 15px var(--display);background:#EFEBE2}
+.mail b{display:block;font-size:14.5px} .mail .from{font:12.5px var(--mono);color:var(--ink2)} .mail .subj{font-size:14px;margin-top:2px}
+.mail .att{font:500 11.5px var(--mono);color:var(--mute);margin-top:4px}
+.srcbar{display:flex;gap:10px;align-items:center;padding:10px 22px;background:#FAF7EF;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+.srcbar code{font:12px var(--mono)}
+@media (max-width:900px){.inboxgrid{grid-template-columns:1fr}.mail{grid-template-columns:40px 1fr}.mail .btn{grid-column:2;justify-self:start}}
 .how{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:28px auto 0;max-width:820px;text-align:left}
 .how>div{background:#FAF7EF;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
 .how b{font:700 15px var(--display);display:flex;gap:8px;align-items:center}
@@ -189,7 +198,7 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
 <body>
 <header><div class="bar">
   <a class="logo" href="#run"><span class="mark"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7.5" stroke="#D4FF3A" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>stampd<small>AP decisions, explained</small></a>
-  <nav class="tabs"><a href="#run" id="tab-run">⚡ Live run</a><a href="#dash" id="tab-dash">▦ Dashboard <span class="count" id="runcount">0</span></a></nav>
+  <nav class="tabs"><a href="#run" id="tab-run">⚡ Live run</a><a href="#inbox" id="tab-inbox">✉ Inbox</a><a href="#dash" id="tab-dash">▦ Dashboard <span class="count" id="runcount">0</span></a></nav>
   <div class="spacer"></div>
   <span class="pill" id="policy">Tolerance ≤2% · ≤₹10k</span>
   <button class="btn sm" id="reset" title="Clear all runs and restore the seeded payment ledger">↺ Reset demo</button>
@@ -211,17 +220,28 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
         <h2>Every invoice gets a <em>decision</em>.<br>Every decision gets a reason.</h2>
         <p>Drop a vendor invoice or pick one from the test deck. Stampd reads it, checks it against the vendor master, purchase orders and payment history, and tells you what to do and why.</p>
         <div class="how">
-          <div><b><i>01</i>Read</b><p>Native PDF text, or OCR for scans. Pulls vendor, amounts, PO, bank details and line items, in any common Indian invoice layout.</p></div>
-          <div><b><i>02</i>Check</b><p>Rules run against the vendor master, open POs and payment history: arithmetic, tolerance, split billing, duplicates, bank changes, currency and dates.</p></div>
+          <div><b><i>01</i>Read</b><p>PDFs uploaded here or emailed to the AP inbox, native or scanned (OCR). Pulls vendor, amounts, PO, bank details and line items.</p></div>
+          <div><b><i>02</i>Check</b><p>Rules run against the vendor master, POs, goods receipts and payment history: arithmetic, tolerance, split billing, 3-way match, duplicates, bank and sender changes.</p></div>
           <div><b><i>03</i>Decide &amp; explain</b><p>Approve, hold or reject, with reason codes, who it is routed to and a drafted vendor email. A reviewer can overrule it, but must give a reason.</p></div>
         </div>
         <p class="principle"><b>Design principle:</b> AI reads, rules decide. The same invoice always gets the same answer, and every answer can be explained to an auditor.</p>
-        <div class="flow"><span>Ingest</span><i>→</i><span>Extract</span><i>→</i><span>Validate</span><i>→</i><span>Vendor</span><i>→</i><span>PO match</span><i>→</i><span>Duplicate</span><i>→</i><span style="background:var(--lime);border-color:var(--ink)">Decision</span></div>
+        <div class="flow"><span>Ingest</span><i>→</i><span>Extract</span><i>→</i><span>Validate</span><i>→</i><span>Vendor</span><i>→</i><span>PO match</span><i>→</i><span>GRN 3-way</span><i>→</i><span>Duplicate</span><i>→</i><span style="background:var(--lime);border-color:var(--ink)">Decision</span></div>
         <div class="cta">Try <a data-try="01_happy_path_northwind.pdf">a clean invoice</a> · <a data-try="06_bank_details_changed_kestrel.pdf">a payment-fraud attempt</a> · <a data-try="03_split_po_overbilled_brightline.pdf">a split-billing overrun</a></div>
       </div>
       <div id="run" class="hide"></div>
     </div>
     <div id="pdfside" class="panel hide"><div class="ph"><b>Source invoice</b><span class="mono" id="pdfname" style="color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><div class="spacer"></div><button class="btn sm" id="closesplit">Close ✕</button></div><iframe id="pdfframe" title="Source invoice"></iframe></div>
+  </section>
+
+  <section id="view-inbox" class="hide">
+    <div class="dhead"><div><div class="sec-t" style="margin:0 0 6px">Channel · ap@meridianretail.in</div><h1>Invoice inbox</h1></div></div>
+    <p style="color:var(--ink2);max-width:760px;margin:-6px 0 18px">In production, vendors email invoices to an AP mailbox. Stampd picks up each email, pulls out the PDF attachments, and also checks <b>who sent it</b>: an invoice from a look-alike domain is a classic business-email-compromise attack.</p>
+    <div class="inboxgrid">
+      <div class="panel" id="mails"></div>
+      <label class="drop" id="emldrop"><input type="file" id="emlfile" accept=".eml,message/rfc822" hidden>
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#14110F" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
+        <h3>Drop a vendor email (.eml)</h3><p>Any email with a PDF invoice attached. In Gmail: ⋮ → Download message</p></label>
+    </div>
   </section>
 
   <section id="view-dash" class="hide">
@@ -260,9 +280,10 @@ async function api(u,o){const r=await fetch(u,o);if(!r.ok){let m='Request failed
 // ---------- routing
 function route(){
   const h=location.hash||'#run', [v,id]=h.slice(1).split('/');
-  $('#view-run').classList.toggle('hide',v!=='run'); $('#view-dash').classList.toggle('hide',v!=='dash');
+  $('#view-run').classList.toggle('hide',v!=='run'); $('#view-dash').classList.toggle('hide',v!=='dash'); $('#view-inbox').classList.toggle('hide',v!=='inbox'); $('#tab-inbox').classList.toggle('on',v==='inbox');
   $('#tab-run').classList.toggle('on',v==='run'); $('#tab-dash').classList.toggle('on',v==='dash');
   if(v==='dash') loadDash();
+  if(v==='inbox') loadInbox();
   if(v==='run'&&id&&id!==current) watch(id);
   if(v==='run'&&!id&&!current){$('#empty').classList.remove('hide');$('#run').classList.add('hide')}
   if(v!=='run'){$('#view-run').classList.remove('split')}else applySplit()
@@ -302,6 +323,26 @@ fileIn.onchange=()=>{if(fileIn.files[0])submit({file:fileIn.files[0]});fileIn.va
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)submit({file:f})});
 
+// ---------- inbox
+async function loadInbox(){
+  const mails=await api('/api/inbox');
+  $('#mails').innerHTML=mails.map(m=>`<div class="mail"><div class="av">${esc((m.from_name||m.from||'?')[0])}</div>
+    <div style="min-width:0"><b>${esc(m.from_name||m.from)}</b><span class="from">${esc(m.from)}</span><div class="subj">${esc(m.subject)}</div>
+    <div class="att">📎 ${m.attachments.map(esc).join(', ')}</div></div>
+    <button class="btn dark sm" data-mail="${esc(m.file)}">Process →</button></div>`).join('')||'<p style="padding:20px">No emails.</p>';
+  document.querySelectorAll('[data-mail]').forEach(b=>b.onclick=()=>ingest({sample:b.dataset.mail}));
+}
+async function ingest({sample,file}){
+  const fd=new FormData(); if(sample)fd.append('sample',sample); if(file)fd.append('file',file);
+  try{const r=await api('/api/inbox',{method:'POST',body:fd}); toast(`Picked up ${r.runs.length} invoice(s) from ${r.from}`); location.hash='#run/'+r.runs[0]; refreshCount()}
+  catch(e){toast('⚠ '+e.message)}
+}
+const emlIn=$('#emlfile'), emlDrop=$('#emldrop');
+emlIn.onchange=()=>{if(emlIn.files[0])ingest({file:emlIn.files[0]});emlIn.value=''};
+['dragenter','dragover'].forEach(ev=>emlDrop.addEventListener(ev,e=>{e.preventDefault();emlDrop.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>emlDrop.addEventListener(ev,e=>{e.preventDefault();emlDrop.classList.remove('over')}));
+emlDrop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)ingest({file:f})});
+
 // ---------- live run
 function watch(id){
   current=id; toggled={}; scrolled=false; draft={reason:'',reviewer:draft.reviewer}; clearInterval(poll); $('#empty').classList.add('hide'); $('#run').classList.remove('hide');
@@ -315,6 +356,7 @@ function renderRun(r){
     <div class="meta mono">run ${r.id} · ${new Date(r.created*1000).toLocaleTimeString()} · ${elapsed}</div></div>
     ${running?'<span class="live"><i></i>PROCESSING</span>':`<span class="badge ${r.final}">${r.final}${r.review?' · reviewed':''}</span>`}
     <button class="btn sm ${split?'on':''}" id="splitbtn" title="Show the source invoice next to the analysis">⇆ Compare with invoice</button></div>
+    ${r.source?`<div class="srcbar">✉ <span>Received by email from <code>${esc(r.source.from)}</code></span><span style="color:var(--mute)">· “${esc(r.source.subject)}”</span></div>`:''}
     <div class="progress"><div style="width:${done/st.length*100}%"></div></div><div class="stages">`;
   st.forEach((s,i)=>{
     const isOpen=s.checks&&(toggled[s.key]??['fail','warn'].includes(s.status));

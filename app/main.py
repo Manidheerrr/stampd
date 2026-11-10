@@ -1,4 +1,4 @@
-import os, json, uuid, time, sqlite3, threading, shutil, traceback
+import os, json, uuid, time, sqlite3, threading, shutil, traceback, email, email.policy, email.utils
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "stampd.db")
 UP = os.path.join(ROOT, "data", "uploads"); os.makedirs(UP, exist_ok=True)
 SAMPLES = os.path.join(ROOT, "samples", "pdfs")
+EMAILS = os.path.join(ROOT, "samples", "emails")
 MASTER = json.load(open(os.path.join(ROOT, "data", "master.json")))
 LOCK = threading.Lock()
 app = FastAPI(title="Stampd")
@@ -24,7 +25,7 @@ def init(reset=False):
             c.execute("DROP TABLE IF EXISTS runs"); c.execute("DROP TABLE IF EXISTS ledger")
         c.execute("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, created REAL, filename TEXT, status TEXT, decision TEXT, vendor TEXT, invoice_no TEXT, total REAL, duration REAL, stages TEXT, output TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, vendor_id TEXT, invoice_no TEXT, po TEXT, amount REAL, invoice_date TEXT, status TEXT, run_id TEXT)")
-        for col in ("path TEXT", "review TEXT"):
+        for col in ("path TEXT", "review TEXT", "source TEXT"):
             try: c.execute("ALTER TABLE runs ADD COLUMN " + col)
             except sqlite3.OperationalError: pass
         if not c.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]:
@@ -36,7 +37,7 @@ def init(reset=False):
 init()
 
 
-def execute(run_id, path, filename):
+def execute(run_id, path, filename, source=None):
     stages = {k: {"key": k, "label": lbl, "status": "pending"} for k, lbl in STAGES}
 
     def emit(key, data):
@@ -48,7 +49,7 @@ def execute(run_id, path, filename):
     try:
         with LOCK, db() as c:
             ledger = [dict(r) for r in c.execute("SELECT * FROM ledger")]
-        out = run_pipeline(path, filename, MASTER, ledger, emit)
+        out = run_pipeline(path, filename, MASTER, ledger, emit, source=source)
         f, res = out["fields"], out["result"]
         with LOCK, db() as c:
             c.execute("UPDATE runs SET status='done', decision=?, vendor=?, invoice_no=?, total=?, duration=?, output=? WHERE id=?",
@@ -67,12 +68,13 @@ def execute(run_id, path, filename):
                       (round(time.time() - t0, 2), json.dumps(list(stages.values())), run_id))
 
 
-def start(path, filename):
+def start(path, filename, source=None):
     rid = uuid.uuid4().hex[:8]
     stages = [{"key": k, "label": l, "status": "pending"} for k, l in STAGES]
     with LOCK, db() as c:
-        c.execute("INSERT INTO runs (id,created,filename,status,stages,path) VALUES (?,?,?,?,?,?)", (rid, time.time(), filename, "running", json.dumps(stages), path))
-    threading.Thread(target=execute, args=(rid, path, filename), daemon=True).start()
+        c.execute("INSERT INTO runs (id,created,filename,status,stages,path,source) VALUES (?,?,?,?,?,?,?)",
+                  (rid, time.time(), filename, "running", json.dumps(stages), path, json.dumps(source) if source else None))
+    threading.Thread(target=execute, args=(rid, path, filename, source), daemon=True).start()
     return {"id": rid}
 
 
@@ -98,7 +100,7 @@ FINAL = {"approve": "APPROVE", "reject": "REJECT"}
 
 def row(r, full=False):
     d = dict(r); d["stages"] = json.loads(d["stages"] or "[]"); d.pop("path", None)
-    d["review"] = json.loads(d.get("review") or "null")
+    d["review"] = json.loads(d.get("review") or "null"); d["source"] = json.loads(d.get("source") or "null")
     d["final"] = FINAL[d["review"]["action"]] if d["review"] else d["decision"]
     out = json.loads(d.pop("output") or "null")
     if full: d["output"] = out
@@ -180,12 +182,59 @@ def samples():
         "08": ("Different layout", "CGST+SGST split, Rs., HSN column", "happy"),
         "09": ("Arithmetic error", "Line items don't add up to subtotal", "edge"),
         "10": ("Foreign currency", "Billed in USD against an INR PO", "edge"),
+        "11": ("Billed before delivery", "Invoice qty exceeds goods received (GRN)", "edge"),
+        "12": ("Price above PO", "Unit price 10% over the agreed PO rate", "edge"),
     }
     out = []
     for fn in sorted(os.listdir(SAMPLES)):
         if fn.endswith(".pdf"):
             t, d, k = meta.get(fn[:2], (fn, "", "edge")); out.append({"file": fn, "title": t, "desc": d, "kind": k})
     return out
+
+
+def parse_eml(raw):
+    m = email.message_from_bytes(raw, policy=email.policy.default)
+    atts = [(p.get_filename() or "invoice.pdf", p.get_content()) for p in m.iter_attachments()
+            if (p.get_content_type() == "application/pdf" or (p.get_filename() or "").lower().endswith(".pdf"))]
+    name, addr = email.utils.parseaddr(str(m.get("From", "")))
+    body = m.get_body(preferencelist=("plain",))
+    return {"from": addr, "from_name": name, "subject": str(m.get("Subject", "")), "date": str(m.get("Date", "")),
+            "body": (body.get_content() if body else "")[:600]}, atts
+
+
+@app.get("/api/inbox")
+def inbox():
+    out = []
+    for fn in sorted(os.listdir(EMAILS)) if os.path.isdir(EMAILS) else []:
+        if fn.endswith(".eml"):
+            meta, atts = parse_eml(open(os.path.join(EMAILS, fn), "rb").read())
+            out.append({"file": fn, **meta, "attachments": [a[0] for a in atts]})
+    return out
+
+
+@app.post("/api/inbox")
+async def ingest_email(file: UploadFile = File(None), sample: str = Form(None)):
+    if sample:
+        src = os.path.join(EMAILS, os.path.basename(sample))
+        if not os.path.exists(src): raise HTTPException(404, "Sample email not found")
+        raw = open(src, "rb").read()
+    elif file:
+        raw = await file.read()
+        if len(raw) > 20 * 1024 * 1024: raise HTTPException(400, "Email is larger than 20 MB")
+    else:
+        raise HTTPException(400, "Upload an .eml file or choose a sample")
+    try:
+        meta, atts = parse_eml(raw)
+    except Exception:
+        raise HTTPException(400, "That file is not a valid email (.eml)")
+    if not atts: raise HTTPException(400, "The email has no PDF attachment")
+    meta["channel"] = "email"
+    runs = []
+    for fn, data in atts[:5]:
+        dst = os.path.join(UP, uuid.uuid4().hex[:6] + "_" + os.path.basename(fn))
+        open(dst, "wb").write(data)
+        runs.append(start(dst, os.path.basename(fn), source=meta)["id"])
+    return {"runs": runs, "from": meta["from"], "subject": meta["subject"]}
 
 
 @app.get("/api/samples/{name}")

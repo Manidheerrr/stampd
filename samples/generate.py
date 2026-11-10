@@ -107,6 +107,21 @@ def invoice_alt(path):
     c.drawString(40, 60, "Amount in words: Rupees One Lakh Eighteen Thousand Only")
     c.save()
 
+
+def make_emails():
+    """Sample .eml files for inbox ingestion: one genuine, one from a look-alike domain."""
+    from email.message import EmailMessage
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emails"); os.makedirs(out, exist_ok=True)
+    def mk(fn, frm, subj, body, pdf):
+        m = EmailMessage(); m["From"] = frm; m["To"] = "ap@meridianretail.in"; m["Subject"] = subj
+        m["Date"] = "Mon, 09 Nov 2026 10:14:00 +0530"; m.set_content(body)
+        m.add_attachment(open(os.path.join(OUT, pdf), "rb").read(), maintype="application", subtype="pdf", filename=pdf)
+        open(os.path.join(out, fn), "wb").write(bytes(m))
+    mk("e1_genuine_northwind.eml", "Northwind Billing <billing@northwind-supplies.in>", "Invoice INV-NW-3381 for PO-2026-1041",
+       "Hi team,\n\nPlease find attached our invoice for the November paper and toner order.\n\nRegards,\nNorthwind Billing", "01_happy_path_northwind.pdf")
+    mk("e2_lookalike_domain_kestrel.eml", "Kestrel Accounts <accounts@kestre1-logistics.in>", "URGENT: updated bank details - invoice KL-5520",
+       "Dear Sir/Madam,\n\nPlease process the attached invoice today. Note our bank details have been updated.\n\nThanks,\nKestrel Accounts", "02_within_tolerance_kestrel.pdf")
+
 NW = dict(vendor="Northwind Office Supplies Pvt Ltd", address=["14 Industrial Estate, Guindy", "Chennai 600032 | GSTIN 33AAACN4421K1Z5"],
           accent="#1d4ed8", labels={"no": "Invoice No", "date": "Invoice Date", "po": "PO Ref"})
 KL = dict(vendor="Kestrel Logistics", address=["Plot 9, SIPCOT, Sriperumbudur", "GSTIN 33AAFCK7781L1Z2"],
@@ -150,4 +165,11 @@ if __name__ == "__main__":
             inv_no="BL-920", date="09-Nov-2026", po="PO-2026-1077", tax_rate=0, cur="USD",
             items=[("Cloud licence pass-through (USD)", 3, 400.00)], bank=("039105002211", "ICIC0000391"),
             notes=["All amounts in USD. Please remit in USD."])
+    AX = dict(vendor="Apex Packaging Co", address=["22 Ambattur Industrial Estate, Chennai", "GSTIN 33AABCA5532P1Z1"],
+              accent="#b45309", labels={"no": "Invoice No", "date": "Invoice Date", "po": "PO Ref"})
+    invoice(p("11_billed_before_delivery_apex.pdf"), **AX, inv_no="AX-7790", date="09-Nov-2026", po="PO-2026-1110",
+            items=[("Stretch wrap film 23 micron", 450, 200.00)], bank=("20381177307730", "SBIN0004431"))
+    invoice(p("12_price_above_po_apex.pdf"), **AX, inv_no="AX-7795", date="10-Nov-2026", po="PO-2026-1102",
+            items=[("Corrugated box 5-ply 18x12x12", 4000, 16.50)], bank=("20381177307730", "SBIN0004431"))
+    make_emails()
     print("\n".join(sorted(os.listdir(OUT))))

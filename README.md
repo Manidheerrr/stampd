@@ -14,6 +14,10 @@ Stampd takes a vendor invoice PDF (native or scanned) and decides **APPROVE**, *
 ## Design principle: AI reads, rules decide
 OCR and extraction only **read** the invoice. Every payment decision is a **deterministic rule**, so the same invoice always gets the same answer and every answer can be explained to an auditor. Extraction can be swapped for Claude (set `ANTHROPIC_API_KEY`) without changing any decision logic.
 
+## Two ways in
+- **Upload** a PDF (or pick one from the test deck).
+- **Inbox:** an emailed invoice (.eml). Every PDF attachment is processed, and the **sender's domain is checked** against the vendor's address on file. A look-alike domain (`kestre1-logistics.in` vs `kestrel-logistics.in`) is held as a business-email-compromise attempt.
+
 ## Pipeline (each stage streams live in the UI)
 | # | Stage | What it does |
 |---|---|---|
@@ -22,8 +26,9 @@ OCR and extraction only **read** the invoice. Every payment decision is a **dete
 | 3 | Validate | Mandatory fields; line items add up to the subtotal; subtotal + tax = total; valid GST slab; date not in the future or stale; currency matches the POs. |
 | 4 | Vendor | Fuzzy match against the vendor master; vendor approved (KYC done); **bank account matches the verified one**. |
 | 5 | PO match | Explicit PO, or **inferred** from vendor + amount (always held for a human). Checks the **remaining** PO balance, which catches split invoices, and applies a 2% **and** ₹10k tolerance. |
-| 6 | Duplicate | Normalised invoice numbers (`INV/NW/3290` = `INV-NW-3290`) plus vendor + amount + PO, against the payment ledger. |
-| 7 | Decision | Severity roll-up into a decision, route, headline, vendor email and audit record. |
+| 6 | Goods receipt (3-way) | For goods POs: each invoice line is matched to its PO line and to goods received (GRN). Flags lines not on the PO, unit prices above the PO rate (>1%) and quantities billed before they were received. Services POs use a 2-way match. |
+| 7 | Duplicate | Normalised invoice numbers (`INV/NW/3290` = `INV-NW-3290`) plus vendor + amount + PO, against the payment ledger. |
+| 8 | Decision | Severity roll-up into a decision, route, headline, vendor email and audit record. |
 
 ## Test deck (built into the app)
 | # | Scenario | Result |
@@ -38,14 +43,21 @@ OCR and extraction only **read** the invoice. Every payment decision is a **dete
 | 08 | Different layout: CGST+SGST, "Rs.", dd/mm/yyyy, HSN column | APPROVE |
 | 09 | Line items don't add up to the subtotal | HOLD + vendor email |
 | 10 | Billed in USD against an INR PO | HOLD → Treasury (FX) |
+| 11 | Billed 450 units, only 400 received (GRN) | HOLD → Stores / receiving |
+| 12 | Unit price 10% above the PO rate | HOLD → Procurement |
+| ✉ e1 | Genuine vendor email | APPROVE |
+| ✉ e2 | Look-alike sender domain + "urgent, bank updated" | HOLD → Treasury |
 
 Approved invoices are written to the ledger, so re-running one is caught as a duplicate. **Reset demo** restores the seeded ledger.
 
 ## Reviewer step
 Every finished run has a reviewer panel. Confirming the system's decision needs no comment. **Overruling it requires a reason** (8+ characters), which is stored with the reviewer's name and time. Duplicates can never be approved. Approvals go into the payment ledger, which then feeds duplicate detection and PO-balance checks.
 
+## Tests
+`pip install -r requirements-dev.txt && STAMPD_PACE=0 pytest -q`: 27 tests covering every scenario, the parser (dates, CGST+SGST, derived amounts), reviewer rules, email ingestion and bad uploads. GitHub Actions runs them on every push (`.github/workflows/ci.yml`).
+
 ## API
-`POST /api/runs` (file or `sample`) · `GET /api/runs` · `GET /api/runs/{id}` · `GET /api/runs/{id}/pdf` · `GET /api/runs/{id}/audit` · `POST /api/runs/{id}/review` · `GET /api/config` · `POST /api/reset`
+`POST /api/runs` (file or `sample`) · `GET /api/runs` · `GET /api/runs/{id}` · `GET /api/runs/{id}/pdf` · `GET /api/runs/{id}/audit` · `POST /api/runs/{id}/review` · `GET/POST /api/inbox` · `GET /api/config` · `POST /api/reset`
 
 ## Run locally
 - **Windows:** double-click `start.bat`. It installs Python if needed and opens http://localhost:8000.
