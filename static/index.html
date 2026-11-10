@@ -173,7 +173,7 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
 .review textarea,.review input{width:100%;font:inherit;font-size:14px;border:1px solid var(--line2);border-radius:10px;padding:9px 12px;background:#fff;color:var(--ink)}
 .review textarea{min-height:64px;resize:vertical}
 .review .row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center}
-.review .row input{flex:1;min-width:160px}
+.review .row input{flex:1;min-width:160px} .review .row input[type=checkbox]{flex:none;min-width:0;width:16px;height:16px;padding:0;accent-color:var(--ink)}
 .btn.ok{background:var(--ok);color:#fff;border-color:var(--ok)} .btn.bad{background:#fff;color:var(--bad);border-color:var(--bad)}
 .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .verdict{display:flex;gap:12px;align-items:flex-start}
@@ -201,7 +201,7 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
   <nav class="tabs"><a href="#run" id="tab-run">⚡ Live run</a><a href="#inbox" id="tab-inbox">✉ Inbox</a><a href="#dash" id="tab-dash">▦ Dashboard <span class="count" id="runcount">0</span></a></nav>
   <div class="spacer"></div>
   <span class="pill" id="policy">Tolerance ≤2% · ≤₹10k</span>
-  <button class="btn sm" id="reset" title="Clear all runs and restore the seeded payment ledger">↺ Reset demo</button>
+  <button class="btn sm" id="reset" title="Your runs are private to this browser. Reset clears only your sandbox.">↺ Reset my sandbox</button>
 </div></header>
 
 <main>
@@ -275,7 +275,9 @@ let current=null, poll=null, filter='ALL', samplesList=[], toggled={}, scrolled=
 try{split=localStorage.getItem('stampd.split')==='1'}catch(e){}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200)}
 
-async function api(u,o){const r=await fetch(u,o);if(!r.ok){let m='Request failed';try{m=(await r.json()).detail||m}catch(e){}throw new Error(m)}return r.json()}
+const SB=(()=>{let v=null;try{v=localStorage.getItem('stampd.sb')}catch(e){}if(!v||!/^[A-Za-z0-9_-]{4,40}$/.test(v)){v='sb-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);try{localStorage.setItem('stampd.sb',v)}catch(e){}}return v})();
+const sbq=u=>u+(u.includes('?')?'&':'?')+'sb='+SB;
+async function api(u,o){o=o||{};o.headers=Object.assign({'X-Sandbox':SB},o.headers||{});const r=await fetch(u,o);if(!r.ok){let m='Request failed';try{m=(await r.json()).detail||m}catch(e){}throw new Error(m)}return r.json()}
 
 // ---------- routing
 function route(){
@@ -303,7 +305,7 @@ async function loadSamples(){
 }
 function showPdf(f,url){$('#pdft').textContent=f;$('#pdff').src=url||('/api/samples/'+encodeURIComponent(f));$('#pdfm').classList.add('show')}
 function applySplit(){const on=split&&current&&lastRun;$('#view-run').classList.toggle('split',!!on);$('#pdfside').classList.toggle('hide',!on);
-  if(on&&splitFor!==current){splitFor=current;$('#pdfframe').src='/api/runs/'+current+'/pdf';$('#pdfname').textContent=lastRun.filename}
+  if(on&&splitFor!==current){splitFor=current;$('#pdfframe').src=sbq('/api/runs/'+current+'/pdf');$('#pdfname').textContent=lastRun.filename}
   const b=$('#splitbtn');if(b)b.classList.toggle('on',!!split)}
 function setSplit(v){split=v;try{localStorage.setItem('stampd.split',v?'1':'0')}catch(e){}applySplit()}
 $('#closesplit').onclick=()=>setSplit(false);
@@ -376,8 +378,16 @@ function renderRun(r){
   if(r.status!=='running'&&!scrolled){scrolled=true;const d=document.querySelector('.decision');if(d&&r.created>Date.now()/1000-30)setTimeout(()=>d.scrollIntoView({behavior:'smooth',block:'center'}),150)}
   const cp=$('#copymail'); if(cp)cp.onclick=()=>{navigator.clipboard?.writeText($('#mailbody').innerText);toast('Email copied to clipboard')};
 }
+function onboardBlock(r){
+  const f=r.output.fields||{};
+  return `<div class="review" style="background:var(--info-bg);border-color:#D4D4FA"><h4>Testing with your own invoice?</h4>
+    <p>Stampd only pays vendors that have been onboarded, so an unknown vendor is always rejected. To see the rest of the checks on your invoice,
+    add <b>${esc(f.vendor_name||'this vendor')}</b> as a <b>test vendor</b> in your private sandbox${f.total?`, with a test PO for ${money(f.total,f)}`:''}, and re-run it.</p>
+    <div class="row"><label style="display:flex;gap:8px;align-items:center;font-size:13.5px"><input type="checkbox" id="obpo" checked style="width:auto"> Also create a matching test PO</label>
+    <div class="spacer"></div><button class="btn dark" id="onboard">＋ Add test vendor &amp; re-run</button></div></div>`;
+}
 function reviewBlock(r){
-  const o=r.output, sys=r.decision, rv=r.review, dup=(o.result.flags||[]).some(x=>x.code==='DUPLICATE');
+  const o=r.output, sys=r.decision, rv=r.review, dup=(o.result.flags||[]).some(x=>x.code==='DUPLICATE'), unknown=!o.vendor;
   if(rv) return `<div class="review"><div class="verdict"><span class="badge ${r.final}">${r.final==='APPROVE'?'APPROVED':'REJECTED'}</span><div>
       <h4>${rv.override?'Overruled by':'Confirmed by'} ${esc(rv.reviewer)}</h4>
       <p style="margin:0">${rv.reason?'“'+esc(rv.reason)+'”':'No comment'}<span class="sub">${new Date(rv.at*1000).toLocaleString()} · system said ${sys} · recorded in the audit trail${r.final==='APPROVE'?' and payment ledger':''}</span></p></div></div></div>`;
@@ -385,11 +395,13 @@ function reviewBlock(r){
   return `<div class="review"><h4>Reviewer decision</h4><p>${ask} A reason is mandatory when you overrule Stampd.</p>
     <textarea id="rvreason" placeholder="Reason, e.g. 'Called vendor on known number, bank change confirmed'">${esc(draft.reason)}</textarea>
     <div class="row"><input id="rvname" placeholder="Your name" value="${esc(draft.reviewer)}">
-      <button class="btn ok" id="rvapprove" ${dup?'disabled title="Duplicates can never be approved"':''}>✓ Approve for payment</button>
+      <button class="btn ok" id="rvapprove" ${dup||unknown?'disabled title="'+(dup?'Duplicates can never be approved':'Unknown vendors cannot be paid')+'"':''}>✓ Approve for payment</button>
       <button class="btn bad" id="rvreject">✕ Reject</button></div>
     ${dup?'<p style="margin:10px 0 0;color:var(--bad)">Approval is locked: this invoice was already paid.</p>':''}</div>`;
 }
 function bindReview(r){
+  const ob=$('#onboard'); if(ob)ob.onclick=async()=>{ob.disabled=true;try{const res=await api('/api/runs/'+r.id+'/onboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({create_po:$('#obpo').checked})});
+    toast('Test vendor added. Re-running…');location.hash='#run/'+res.id;refreshCount();api('/api/config').then(showCfg)}catch(e){ob.disabled=false;toast('⚠ '+e.message)}};
   const a=$('#rvapprove'), j=$('#rvreject'); if(!a)return;
   $('#rvreason').oninput=e=>draft.reason=e.target.value; $('#rvname').oninput=e=>draft.reviewer=e.target.value;
   const go=async action=>{try{const res=await api('/api/runs/'+r.id+'/review',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -403,7 +415,7 @@ function decisionCard(r){
   const items=(f.line_items||[]).map(i=>`<tr><td>${esc(i.description)}</td><td class="r mono">${i.qty}</td><td class="r mono">${money(i.amount,f)}</td></tr>`).join('');
   return `<div class="panel decision"><div class="dtop"><div class="stamp ${res.decision}">${res.decision==='APPROVE'?'APPROVED':res.decision==='HOLD'?'ON HOLD':'REJECTED'}</div>
     <div><h3>${esc(res.headline)}</h3><span class="route">→ ${esc(res.route)}</span></div>
-    <div class="dact"><a class="btn sm" href="/api/runs/${r.id}/audit" download title="Download the full audit record as JSON">⇩ Audit record</a></div></div>
+    <div class="dact"><a class="btn sm" href="${sbq('/api/runs/'+r.id+'/audit')}" download title="Download the full audit record as JSON">⇩ Audit record</a></div></div>
     <div class="dgrid"><section><p class="sec-t">Why</p>${fl}</section>
     <section><p class="sec-t">What we read · ${esc(o.extractor)}${o.read_mode==='ocr'?` · OCR ${Math.round(o.ocr_confidence*100)}%`:''}</p>
       <dl class="kv"><dt>Vendor</dt><dd>${esc(f.vendor_name)}</dd><dt>Invoice no.</dt><dd>${esc(f.invoice_no)||'—'}</dd><dt>Date</dt><dd>${esc(f.invoice_date)||'—'}</dd>
@@ -414,6 +426,7 @@ function decisionCard(r){
     </section></div>
     ${res.email?`<div class="email"><div class="eh"><b>✉ Draft to vendor</b><span class="mono" style="color:var(--mute)">${esc(res.email.to)}</span><div class="spacer"></div><button class="btn sm" id="copymail">Copy</button></div>
       <pre id="mailbody"><b>Subject:</b> ${esc(res.email.subject)}\n\n${esc(res.email.body)}</pre></div>`:''}
+    ${!o.vendor&&(flags||[]).some(x=>x.code==='VENDOR_UNKNOWN')?onboardBlock(r):''}
     ${reviewBlock(r)}
     <details class="raw"><summary>Audit trail: raw text the process read</summary><pre>${esc(o.raw_text)}</pre></details></div>`;
 }
@@ -446,8 +459,9 @@ function renderRows(){
 $('#filters').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;filter=b.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===b));renderRows()};
 $('#q').oninput=renderRows;
 async function refreshCount(){try{const r=await api('/api/runs');$('#runcount').textContent=r.length;if(!$('#view-dash').classList.contains('hide'))loadDash()}catch(e){}}
-$('#reset').onclick=async()=>{if(!confirm('Clear all runs and restore the seeded payment ledger?'))return;await api('/api/reset',{method:'POST'});current=null;clearInterval(poll);location.hash='#run';$('#empty').classList.remove('hide');$('#run').classList.add('hide');refreshCount();toast('Demo reset: ledger restored')};
-api('/api/config').then(m=>$('#policy').textContent=`${m.extractor} · tolerance ≤${m.policy.variance_tolerance_pct}% & ≤₹${(m.policy.variance_tolerance_abs/1000)}k · ${m.vendors} vendors · ${m.pos} POs`);
+$('#reset').onclick=async()=>{if(!confirm('Clear your runs, approvals and test vendors? (Only your private sandbox is affected.)'))return;await api('/api/reset',{method:'POST'});current=null;clearInterval(poll);location.hash='#run';$('#empty').classList.remove('hide');$('#run').classList.add('hide');refreshCount();toast('Sandbox reset')};
+const showCfg=m=>$('#policy').textContent=`${m.extractor} · tolerance ≤${m.policy.variance_tolerance_pct}% & ≤₹${(m.policy.variance_tolerance_abs/1000)}k · ${m.vendors} vendors · ${m.pos} POs`;
+api('/api/config').then(showCfg);
 loadSamples(); refreshCount(); route();
 </script>
 </body>

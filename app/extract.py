@@ -4,7 +4,8 @@ Two extractors:
   * Rules parser (default, no API key needed): label-driven, tolerant of common Indian invoice layouts
     (Invoice No / Bill # / Inv. No., Grand Total / Amount Due / Total Amount, CGST+SGST split, ₹ / Rs. / INR,
     dd-Mon-yyyy / dd/mm/yyyy / yyyy-mm-dd / "6 Nov 2026" dates, optional HSN column in line items).
-  * Claude (optional): used automatically when ANTHROPIC_API_KEY is set. Falls back to rules on any error.
+  * LLM (optional): Claude when ANTHROPIC_API_KEY is set, or Google Gemini (free tier) when GEMINI_API_KEY is set.
+    Model output is cleaned, gaps are filled from the rules parser, and any error falls back to rules.
 Extraction only *reads*. It never decides anything; decisions live in pipeline.py.
 """
 import os, re, subprocess, tempfile, json, datetime
@@ -191,37 +192,89 @@ def parse_rules(text):
     return f
 
 
-# ---------------------------------------------------------------- optional LLM extractor
-def parse_llm(text):
-    import anthropic
-    client = anthropic.Anthropic()
-    schema = ("vendor_name, invoice_no, invoice_date (as printed), invoice_date_iso (yyyy-mm-dd), po_ref, currency (ISO code), "
-              "subtotal (number), tax (number, sum of all GST components), total (number), bank_account, ifsc, "
-              "line_items (list of {description, hsn, qty, rate, amount}), notes (list of notable remarks, e.g. bank change requests)")
-    msg = client.messages.create(
-        model=os.environ.get("LLM_MODEL", "claude-sonnet-5-5"), max_tokens=2000,
-        messages=[{"role": "user", "content":
-                   "You are extracting fields from a vendor invoice for an accounts-payable system. Return ONLY strict JSON "
-                   f"with these keys: {schema}. Use null when a field is absent. Never guess or compute values that are not printed."
-                   f"\n\nINVOICE TEXT:\n{text}"}])
-    raw = msg.content[0].text
-    f = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
-    f.setdefault("_derived", [])
-    if not f.get("invoice_date_iso"):
-        f["invoice_date_iso"] = parse_date(f.get("invoice_date"))
-    f.setdefault("currency", "INR")
+# ---------------------------------------------------------------- optional LLM extractors (read only, never decide)
+LLM_SCHEMA = ("vendor_name, invoice_no, invoice_date (exactly as printed), invoice_date_iso (yyyy-mm-dd), po_ref, currency (ISO code), "
+              "subtotal (number), tax (number: sum of all GST components), total (number), bank_account, ifsc, "
+              "line_items (list of {description, hsn, qty (number), rate (number), amount (number)}), "
+              "notes (list of notable remarks, e.g. bank-change requests)")
+LLM_PROMPT = ("You extract fields from a vendor invoice for an accounts-payable system. Return ONLY a JSON object with these keys: "
+              + LLM_SCHEMA + ". Use null when a field is not printed. Never guess, and never compute a value that is not printed.\n\nINVOICE TEXT:\n")
+GEMINI_MODELS = [m for m in [os.environ.get("GEMINI_MODEL"), "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"] if m]
+
+
+def _clean_llm(f, text):
+    """Normalise model output, then fill any gaps from the rules parser so one missed field never blanks a run."""
+    if not isinstance(f, dict): raise ValueError("model did not return a JSON object")
+    for k in ("subtotal", "tax", "total"):
+        f[k] = to_num(f[k]) if f.get(k) not in (None, "") else None
+    items = []
+    for it in f.get("line_items") or []:
+        if isinstance(it, dict) and it.get("description"):
+            q = to_num(it.get("qty")); q = int(q) if q is not None and float(q).is_integer() else q
+            items.append({"description": str(it["description"]), "hsn": it.get("hsn"), "qty": q, "rate": to_num(it.get("rate")), "amount": to_num(it.get("amount"))})
+    f["line_items"] = [i for i in items if None not in (i["qty"], i["amount"])]
+    for k in ("vendor_name", "invoice_no", "invoice_date", "po_ref", "bank_account", "ifsc", "currency"):
+        if f.get(k) is not None: f[k] = str(f[k]).strip() or None
+    if f.get("po_ref"): f["po_ref"] = re.sub(r"\s", "-", f["po_ref"].upper())
+    rules = parse_rules(text); f["_filled_by_rules"] = []
+    for k in ("vendor_name", "invoice_no", "invoice_date", "po_ref", "subtotal", "tax", "total", "bank_account", "ifsc"):
+        if f.get(k) in (None, "") and rules.get(k) not in (None, ""):
+            f[k] = rules[k]; f["_filled_by_rules"].append(k)
+    if not f["line_items"]: f["line_items"] = rules["line_items"]
+    f["currency"] = (f.get("currency") or rules["currency"] or "INR").upper()
+    f["invoice_date_iso"] = f.get("invoice_date_iso") if parse_date(f.get("invoice_date_iso") or "") else parse_date(f.get("invoice_date"))
+    f.setdefault("notes", rules["notes"]); f.setdefault("_derived", [])
     return f
 
 
+def parse_claude(text):
+    import anthropic
+    msg = anthropic.Anthropic().messages.create(model=os.environ.get("LLM_MODEL", "claude-sonnet-5-5"), max_tokens=2000,
+                                               messages=[{"role": "user", "content": LLM_PROMPT + text}])
+    raw = msg.content[0].text
+    return _clean_llm(json.loads(raw[raw.find("{"): raw.rfind("}") + 1]), text)
+
+
+def parse_gemini(text):
+    """Google Gemini via plain REST (free tier available). Tries a few model ids so a renamed model doesn't break it."""
+    import urllib.request, urllib.error
+    body = json.dumps({"contents": [{"parts": [{"text": LLM_PROMPT + text}]}],
+                       "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}).encode()
+    last = None
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+                                     headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+        try:
+            with urllib.request.urlopen(req, timeout=40) as r:
+                data = json.load(r)
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            f = _clean_llm(json.loads(raw[raw.find("{"): raw.rfind("}") + 1]), text)
+            f["_model"] = model
+            return f
+        except urllib.error.HTTPError as e:
+            last = f"{model}: HTTP {e.code}"
+            if e.code not in (404, 400): break  # quota/auth errors won't be fixed by another model id
+        except Exception as e:
+            last = f"{model}: {e}"
+    raise RuntimeError(last or "Gemini unavailable")
+
+
 def extractor_name():
-    return "Claude" if os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("EXTRACTOR", "auto") != "rules" else "Rules parser"
+    mode = os.environ.get("EXTRACTOR", "auto")
+    if mode == "rules": return "Rules parser"
+    if os.environ.get("ANTHROPIC_API_KEY") and mode in ("auto", "claude"): return "Claude"
+    if os.environ.get("GEMINI_API_KEY") and mode in ("auto", "gemini"): return "Gemini"
+    return "Rules parser"
 
 
 def extract(text):
-    if extractor_name() == "Claude":
-        try:
-            return parse_llm(text), "Claude"
-        except Exception as e:
-            f = parse_rules(text); f["_llm_error"] = str(e)[:200]
-            return f, "Rules parser (Claude unavailable, fell back)"
-    return parse_rules(text), "Rules parser"
+    name = extractor_name()
+    if name == "Rules parser":
+        return parse_rules(text), name
+    try:
+        f = parse_claude(text) if name == "Claude" else parse_gemini(text)
+        filled = f.get("_filled_by_rules") or []
+        return f, name + (f" + rules for {', '.join(filled)}" if filled else "")
+    except Exception as e:
+        f = parse_rules(text); f["_llm_error"] = str(e)[:200]
+        return f, f"Rules parser ({name} unavailable: {str(e)[:60]})"

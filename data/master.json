@@ -152,7 +152,13 @@
       "po": "PO-2026-1029",
       "amount": 59000.0,
       "invoice_date": "2026-10-14",
-      "status": "paid"
+      "status": "paid",
+      "lines": [
+        {
+          "description": "Stationery restock kit",
+          "qty": 50
+        }
+      ]
     },
     {
       "vendor_id": "V003",

@@ -64,7 +64,17 @@ Every finished run has a reviewer panel. Confirming the system's decision needs 
 - **Mac/Linux:** `brew install tesseract poppler` (or apt), then `./run.sh`.
 - **Docker:** `docker build -t stampd . && docker run -p 8000:8000 stampd`.
 
-**Optional Claude extraction:** set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`). If the API call fails, it falls back to the rules parser.
+## Optional LLM extraction (reading only)
+By default Stampd uses its **rules-based extractor** (no AI, no API key). An LLM can be plugged in to read layouts the rules don't know:
+- **Google Gemini (free tier):** set `GEMINI_API_KEY` (optionally `GEMINI_MODEL`). Get a key at aistudio.google.com.
+- **Claude:** set `ANTHROPIC_API_KEY` (optionally `LLM_MODEL`).
+
+The model's output is cleaned and type-checked, any field it misses is filled from the rules parser, and any error falls back to rules entirely. **The model never makes the decision.** Note: free-tier LLM APIs may use submitted content to improve their products, so use demo invoices, not confidential ones.
+
+## Sandboxes
+Every browser gets a private sandbox: its own runs, approvals, test vendors and reset button. The seeded master data (vendors, POs, goods receipts, payment history) is shared and read-only.
+
+**Testing with your own invoice:** an unknown vendor is always rejected (Stampd never pays a vendor that hasn't been onboarded). The result screen offers **"Add test vendor & re-run"**, which adds the vendor (and optionally a matching test PO) to *your* sandbox only, so you can see every other check run on your invoice.
 
 ## Assumptions
 - One invoice per PDF. The vendor master, POs and ledger are JSON/SQLite stand-ins for an ERP.
@@ -81,3 +91,11 @@ data/master.json  vendors, POs, policy, seeded payment ledger
 samples/          invoice generator (10 scenarios) + cached OCR for Windows
 static/index.html UI: live run, compare-with-invoice view, reviewer panel, dashboard
 ```
+
+## Limitations (honest list)
+- **Extraction:** the default rules parser is tuned on common Indian invoice layouts and the generated test deck. Unusual layouts can miss fields. That's what the optional LLM extractor is for. Multi-page line-item tables and several invoices in one PDF aren't handled.
+- **3-way match** compares quantities and unit prices per PO line against goods receipts, net of quantities already billed. It doesn't handle partial-unit conversions (boxes vs pieces) or returns/debit notes.
+- **No authentication:** anyone with the link can act as a reviewer. Production needs login, roles and maker-checker (one person approves, a second releases payment).
+- **Inbox** ingests `.eml` files. It isn't a live mailbox connection (IMAP/Gmail API would be the next step).
+- **Hosting:** Render's free tier sleeps (~50s first load), OCR on a shared CPU takes 10–30s, and history is wiped on redeploys.
+- **Master data** is a JSON file standing in for an ERP. No FX conversion, no TDS/GST-credit logic yet.
