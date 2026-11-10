@@ -199,7 +199,7 @@ LLM_SCHEMA = ("vendor_name, invoice_no, invoice_date (exactly as printed), invoi
               "notes (list of notable remarks, e.g. bank-change requests)")
 LLM_PROMPT = ("You extract fields from a vendor invoice for an accounts-payable system. Return ONLY a JSON object with these keys: "
               + LLM_SCHEMA + ". Use null when a field is not printed. Never guess, and never compute a value that is not printed.\n\nINVOICE TEXT:\n")
-GEMINI_MODELS = [m for m in [os.environ.get("GEMINI_MODEL"), "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"] if m]
+GEMINI_MODELS = list(dict.fromkeys(m for m in [os.environ.get("GEMINI_MODEL"), "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-flash-latest"] if m))
 
 
 def _clean_llm(f, text):
@@ -238,8 +238,10 @@ def parse_claude(text):
 def _gemini_call(model, prompt, timeout=60):
     import urllib.request
     cfg = {"temperature": 0, "responseMimeType": "application/json"}
-    if "2.5" in model or "flash-latest" in model:
+    if model.startswith("gemini-2.5"):
         cfg["thinkingConfig"] = {"thinkingBudget": 0}  # extraction needs no reasoning; keeps latency low
+    elif model.startswith("gemini-3") or "latest" in model:
+        cfg["thinkingConfig"] = {"thinkingLevel": "low"}
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": cfg}).encode()
     req = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
                                  headers={"Content-Type": "application/json", "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
@@ -254,7 +256,11 @@ def parse_gemini(text):
     errors = []
     for model in GEMINI_MODELS:
         try:
-            raw = _gemini_call(model, LLM_PROMPT + text)
+            try:
+                raw = _gemini_call(model, LLM_PROMPT + text)
+            except urllib.error.HTTPError as e:
+                if e.code != 503: raise
+                __import__("time").sleep(3); raw = _gemini_call(model, LLM_PROMPT + text)  # transient overload: retry once
             f = _clean_llm(json.loads(raw[raw.find("{"): raw.rfind("}") + 1]), text)
             f["_model"] = model
             return f
@@ -273,12 +279,21 @@ def llm_selfcheck():
     """Tiny live call per model, for the /api/llm-check diagnostics endpoint. Never returns the key."""
     if not os.environ.get("GEMINI_API_KEY"):
         return {"configured": False}
-    import urllib.error
+    import urllib.error, urllib.request
+    available = []
+    try:
+        req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                                     headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            available = [m["name"].split("/")[-1] for m in json.load(r).get("models", [])
+                         if "generateContent" in m.get("supportedGenerationMethods", []) and "flash" in m["name"]]
+    except Exception as e:
+        available = [f"(could not list: {str(e)[:60]})"]
     res = {}
     for model in GEMINI_MODELS:
         t0 = __import__("time").time()
         try:
-            out = _gemini_call(model, 'Return the JSON {"ok": true}', timeout=30)
+            out = _gemini_call(model, 'Return the JSON {"ok": true}', timeout=25)
             res[model] = {"ok": True, "secs": round(__import__("time").time() - t0, 1), "reply": out[:40]}
             break
         except urllib.error.HTTPError as e:
@@ -288,7 +303,7 @@ def llm_selfcheck():
             res[model] = {"ok": False, "http": e.code, "error": msg}
         except Exception as e:
             res[model] = {"ok": False, "error": str(e)[:120]}
-    return {"configured": True, "models": res}
+    return {"configured": True, "available_flash_models": available, "models": res}
 
 
 def extractor_name():
