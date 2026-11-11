@@ -73,7 +73,7 @@ main{max-width:1320px;margin:0 auto;padding:24px;overflow-x:clip}
 .stitle{display:flex;align-items:baseline;gap:10px;cursor:pointer;user-select:none}
 .stitle b{font-weight:600} .stitle .sum{color:var(--ink2);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .stitle .ms{margin-left:auto;color:var(--mute);font:12px var(--mono);flex:none}
 .stage.pending .stitle{color:var(--mute)}
-.checks{margin-top:8px;display:grid;gap:5px;animation:fadein .3s}
+.checks{margin-top:8px;display:grid;gap:5px} .checks.anim{animation:fadein .3s}
 @keyframes fadein{from{opacity:0;transform:translateY(-3px)}}
 .chk{display:grid;grid-template-columns:18px 210px 1fr;gap:8px;font-size:13.5px;align-items:baseline;padding:6px 10px;border-radius:9px;background:#FAF7EF}
 .chk .s{font-weight:700} .chk.pass .s{color:var(--ok)} .chk.warn .s{color:var(--warn)} .chk.fail .s{color:var(--bad)}
@@ -122,7 +122,7 @@ details.raw pre{max-height:260px;overflow:auto;background:var(--ink);color:#E9E4
 .dhead{display:flex;align-items:end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
 .dhead h1{margin:0;font:800 34px/1 var(--display);letter-spacing:-.04em}
 .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:18px}
-.kpi{padding:16px 18px;min-width:0} .kpi .v{overflow-wrap:anywhere} .kpi .l{font-size:12.5px;color:var(--mute);font-weight:500} .kpi .v{font:700 30px/1.15 var(--display);letter-spacing:-.03em;margin-top:6px}
+.kpi{padding:16px 18px;min-width:0} .kpi .v{white-space:nowrap;font-size:clamp(20px,2vw,30px)!important} .kpi .l{font-size:12.5px;color:var(--mute);font-weight:500} .kpi .v{font:700 30px/1.15 var(--display);letter-spacing:-.03em;margin-top:6px}
 .kpi .v small{font-size:13px;color:var(--mute);font-weight:500;margin-left:8px;letter-spacing:0}
 .kpi.hero{background:var(--ink);color:#fff;border-color:var(--ink)} .kpi.hero .l{color:#A8A096} .kpi.hero .v{color:var(--lime)}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
@@ -271,7 +271,7 @@ const inr=x=>x==null?'—':'₹'+Number(x).toLocaleString('en-US',{minimumFracti
 const money=(x,f)=>f&&f.currency&&f.currency!=='INR'?(x==null?'—':f.currency+' '+Number(x).toLocaleString('en-US',{minimumFractionDigits:2})):inr(x);
 const ago=t=>{const s=Date.now()/1000-t;return s<60?'just now':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':new Date(t*1000).toLocaleDateString()};
 const SYM={pass:'✓',warn:'!',fail:'✕',running:'',pending:''};
-let current=null, poll=null, filter='ALL', samplesList=[], toggled={}, scrolled=false, split=false, splitFor=null, draft={reason:'',reviewer:''}, lastRun=null;
+let seenOpen=new Set(), current=null, poll=null, filter='ALL', samplesList=[], toggled={}, scrolled=false, split=false, splitFor=null, draft={reason:'',reviewer:''}, lastRun=null;
 try{split=localStorage.getItem('stampd.split')==='1'}catch(e){}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200)}
 
@@ -365,12 +365,13 @@ function renderRun(r){
     h+=`<div class="stage ${s.status} ${!['pending','running'].includes(s.status)?'done':''}"><div class="dot">${SYM[s.status]||''}${s.status==='pending'||s.status==='running'?i+1:''}</div>
       <div class="sbody"><div class="stitle" data-k="${s.key}"><b>${esc(s.label)}</b><span class="sum">${s.status==='running'?'working…':esc(s.summary||'')}</span>${s.ms!=null?`<span class="ms">${s.checks?(isOpen?'▾':'▸'):''} ${s.ms}ms</span>`:''}</div>
       ${s.status==='running'?'<div class="skeleton" style="margin-top:10px"></div>':''}
-      ${isOpen?`<div class="checks">${s.checks.map(c=>`<div class="chk ${c.ok}"><span class="s">${SYM[c.ok]}</span><span class="l">${esc(c.label)}</span><span class="d">${esc(c.detail)}</span></div>`).join('')}</div>`:''}
+      ${isOpen?`<div class="checks ${seenOpen.has(r.id+s.key)?'':'anim'}">${s.checks.map(c=>`<div class="chk ${c.ok}"><span class="s">${SYM[c.ok]}</span><span class="l">${esc(c.label)}</span><span class="d">${esc(c.detail)}</span></div>`).join('')}</div>`:''}
       </div></div>`;
   });
   h+='</div></div>';
   if(r.status==='done'&&r.output) h+=decisionCard(r);
   if(r.status==='error') h+=`<div class="panel decision"><div class="dtop"><div class="stamp ERROR">ERROR</div><div><h3>Processing failed safely: nothing was approved.</h3><p class="meta">Expand the failed stage above for the error. The invoice is routed to manual review.</p></div></div></div>`;
+  r.stages.forEach(s=>{if(s.checks&&(toggled[s.key]??['fail','warn'].includes(s.status)))seenOpen.add(r.id+s.key)});
   lastRun=r; const y=scrollY; $('#run').innerHTML=h; scrollTo(0,y); applySplit();
   $('#splitbtn').onclick=()=>setSplit(!split);
   bindReview(r);
